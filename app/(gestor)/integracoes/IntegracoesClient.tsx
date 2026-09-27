@@ -2,11 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Check, CheckCircle2, Copy, Info, Loader2, Plug, RefreshCw, Webhook, XCircle, Zap } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Check, CheckCircle2, ChevronRight, Copy, Info, Loader2, Plus, RefreshCw, Webhook, XCircle } from "lucide-react";
 import clsx from "clsx";
 import { GoogleAdsIcon, MetaIcon } from "@/components/PlatformIcon";
 import { Panel, Pill } from "@/components/ui";
 import { assignAccount, createClientRecord, setAccountSync } from "../actions";
+import { createDestination } from "../destinos/actions";
 
 export interface AccountRow {
   id: string;
@@ -19,7 +21,7 @@ export interface AccountRow {
   last_error: string | null;
 }
 
-function CopyBtn({ text }: { text: string }) {
+export function CopyBtn({ text }: { text: string }) {
   const [ok, setOk] = useState(false);
   return (
     <button
@@ -38,33 +40,7 @@ function CopyBtn({ text }: { text: string }) {
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
-const samplePayload = `{
-  "event": "metrics.daily",
-  "client": { "id": "…", "name": "Vida Plena Home Care" },
-  "campaign": {
-    "id": "…",
-    "platform": "meta",
-    "name": "[VDP] Conversão | Cuidadores 24h",
-    "status": "active"
-  },
-  "date": "2026-09-27",
-  "metrics": {
-    "spend": 184.32,
-    "impressions": 8421,
-    "reach": 5210,
-    "clicks": 163,
-    "conversions": 11,
-    "revenue": 4950.00
-  },
-  "creatives": [
-    {
-      "format": "image",
-      "headline": "Oferta por tempo limitado",
-      "image_url": "https://…/criativo.jpg",
-      "active": true
-    }
-  ]
-}`;
+
 
 function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
   return (
@@ -81,7 +57,9 @@ export default function IntegracoesClient({
   meta,
   accounts,
   clients,
+  destinations,
 }: {
+  destinations: { id: string; name: string; url: string; active: boolean; last_sent_at: string | null; last_error: string | null }[];
   flash: { tone: "good" | "bad" | "warn"; text: string } | null;
   meta: { user: string; expiresAt: string | null } | null;
   accounts: AccountRow[];
@@ -260,45 +238,51 @@ export default function IntegracoesClient({
         </Panel>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
-        <Panel
-          className="xl:col-span-3"
-          title={
-            <span className="flex items-center gap-2">
-              <Webhook size={16} className="text-fire-400" /> API e Webhooks <Pill tone="warn">Em breve</Pill>
-            </span>
-          }
-          subtitle="Envie os dados desta conta automaticamente para outros sistemas (CRM, sites, Zapier, n8n)."
-        >
-          <ul className="space-y-3 text-sm text-ash-300">
-            <li className="flex gap-3">
-              <Plug size={16} className="mt-0.5 shrink-0 text-fire-400" />
-              <span>
-                <b className="text-white">Chave de API</b> — outro sistema busca os dados da EVX Fire quando quiser.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <Zap size={16} className="mt-0.5 shrink-0 text-fire-400" />
-              <span>
-                <b className="text-white">Webhooks</b> — a EVX Fire envia os dados sozinha a cada atualização: métricas, status de campanha e criativos novos.
-              </span>
-            </li>
+      <Panel
+        title={
+          <span className="flex items-center gap-2">
+            <Webhook size={16} className="text-fire-400" /> Destinos: enviar dados para outros sistemas
+          </span>
+        }
+        subtitle="Conecte seu CRM (ou qualquer sistema) e escolha quais campanhas, conjuntos e anúncios ele recebe."
+        action={
+          <form action={createDestination}>
+            <button className="btn-fire !py-2 !text-xs">
+              <Plus size={14} /> Novo destino
+            </button>
+          </form>
+        }
+      >
+        {!destinations.length ? (
+          <div className="rounded-xl border border-dashed border-fire-500/25 p-6 text-center text-sm text-ash-400">
+            Nenhum destino ainda. Crie um para enviar campanhas, métricas e criativos ao seu CRM automaticamente.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {destinations.map((d) => (
+              <li key={d.id}>
+                <Link href={`/destinos/${d.id}`} className="glass-hover flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                  <span className={clsx("led", !d.active ? "led-paused" : d.last_error ? "led-ended" : "led-active")} />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-white">{d.name}</div>
+                    <div className="truncate font-mono text-[11px] text-ash-400">{d.url || "endereço ainda não configurado"}</div>
+                  </div>
+                  <div className="hidden text-right text-[11px] sm:block">
+                    {d.last_error ? (
+                      <span className="text-bad">Último envio falhou</span>
+                    ) : d.last_sent_at ? (
+                      <span className="text-ash-300">Último envio {fmtDate(d.last_sent_at)}</span>
+                    ) : (
+                      <span className="text-ash-500">{d.active ? "aguardando primeiro envio" : "desligado"}</span>
+                    )}
+                  </div>
+                  <ChevronRight size={16} className="text-ash-500" />
+                </Link>
+              </li>
+            ))}
           </ul>
-          <p className="mt-4 text-xs text-ash-500">Esta parte será ativada na próxima fase. Ao lado está o formato exato dos dados que serão enviados.</p>
-        </Panel>
-
-        <Panel
-          className="xl:col-span-2"
-          title={
-            <span className="flex items-center gap-2">
-              <Zap size={16} className="text-fire-400" /> Exemplo dos dados enviados
-            </span>
-          }
-          action={<CopyBtn text={samplePayload} />}
-        >
-          <pre className="max-h-[420px] overflow-auto rounded-xl border border-white/5 bg-black/50 p-4 font-mono text-[11.5px] leading-relaxed text-ash-200">{samplePayload}</pre>
-        </Panel>
-      </div>
+        )}
+      </Panel>
     </div>
   );
 }

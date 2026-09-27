@@ -8,9 +8,10 @@ export default async function IntegracoesPage({ searchParams }: { searchParams: 
   const db = await createClient();
   const sp = await searchParams;
 
-  const [{ data: accounts }, { data: clients }] = await Promise.all([
+  const [{ data: accounts }, { data: clients }, { data: destinations }] = await Promise.all([
     db.from("ad_accounts").select("id, platform, external_id, name, client_id, sync_enabled, last_synced_at, last_error").eq("agency_id", me.agencyId).order("name"),
     db.from("clients").select("id, name").eq("agency_id", me.agencyId).order("name"),
+    db.from("destinations").select("id, name, url, active, last_sent_at, last_error").eq("agency_id", me.agencyId).order("created_at"),
   ]);
 
   // Os tokens nunca vão para o navegador: aqui lemos só nome e validade da conexão.
@@ -34,6 +35,7 @@ export default async function IntegracoesPage({ searchParams }: { searchParams: 
         meta={metaConn ? { user: metaConn.external_user_name, expiresAt: metaConn.token_expires_at } : null}
         accounts={(accounts ?? []) as AccountRow[]}
         clients={clients ?? []}
+        destinations={destinations ?? []}
       />
     </>
   );

@@ -3,6 +3,7 @@ import { getMe } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { exchangeCode, graphGet, graphList } from "@/lib/meta/graph";
 import { syncMeta } from "@/lib/meta/sync";
+import { dispatchAgency } from "@/lib/fire/dispatch";
 
 export const maxDuration = 300;
 
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
     }
 
     await syncMeta(db, me.agencyId);
+    await dispatchAgency(db, me.agencyId).catch(() => null);
     const res = back(`meta=ok&contas=${accounts.length}`);
     res.cookies.delete("meta_oauth_state");
     return res;

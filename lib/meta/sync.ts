@@ -1,11 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CampaignStatus, CreativeFormat } from "@/lib/types";
-import { graphList } from "./graph";
+import { graphGet, graphList } from "./graph";
+import { computeResult, metricsFromInsight, type Action } from "./results";
 
 const DAYS = 30;
-
-type Action = { action_type: string; value: string };
 
 // Em ordem de prioridade: se houver compra, conta compra; senão, lead.
 const PURCHASE = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase", "onsite_web_purchase"];
@@ -59,6 +58,7 @@ function daysAgo(n: number) {
   d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0, 10);
 }
+const money = (v?: string) => Number(v ?? 0) / 100;
 
 interface MetaCampaign {
   id: string;
@@ -67,16 +67,35 @@ interface MetaCampaign {
   effective_status: string;
   daily_budget?: string;
   lifetime_budget?: string;
+  bid_strategy?: string;
+  start_time?: string;
   stop_time?: string;
+}
+interface MetaAdSet {
+  id: string;
+  name: string;
+  campaign_id: string;
+  effective_status: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  optimization_goal?: string;
+  billing_event?: string;
+  bid_strategy?: string;
+  promoted_object?: Record<string, unknown>;
+  targeting?: Record<string, unknown>;
+  start_time?: string;
+  end_time?: string;
 }
 interface Insight {
   campaign_id?: string;
+  adset_id?: string;
   ad_id?: string;
   date_start: string;
   spend?: string;
   impressions?: string;
   reach?: string;
   clicks?: string;
+  frequency?: string;
   actions?: Action[];
   action_values?: Action[];
 }
@@ -85,6 +104,8 @@ interface MetaAd {
   name: string;
   effective_status: string;
   campaign_id: string;
+  adset_id: string;
+  preview_shareable_link?: string;
   creative?: {
     id: string;
     title?: string;
@@ -93,45 +114,58 @@ interface MetaAd {
     thumbnail_url?: string;
     object_type?: string;
     video_id?: string;
-    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[] };
-    object_story_spec?: { link_data?: { name?: string; message?: string; picture?: string; child_attachments?: unknown[] }; video_data?: { title?: string; message?: string; image_url?: string } };
+    call_to_action_type?: string;
+    effective_object_story_id?: string;
+    instagram_permalink_url?: string;
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; link_urls?: { website_url?: string }[]; videos?: { video_id?: string; thumbnail_url?: string }[]; images?: { url?: string }[] };
+    object_story_spec?: {
+      link_data?: { name?: string; message?: string; picture?: string; link?: string; call_to_action?: { type?: string }; child_attachments?: unknown[] };
+      video_data?: { title?: string; message?: string; image_url?: string; video_id?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+    };
   };
 }
 
-/** Sincroniza UMA conta de anúncios da Meta (campanhas, métricas diárias e criativos). */
-export async function syncMetaAccount(
-  db: SupabaseClient,
-  account: { id: string; agency_id: string; external_id: string },
-  token: string,
-) {
+const METRIC_FIELDS = "spend,impressions,reach,clicks,frequency,actions,action_values";
+
+/** Sincroniza UMA conta de anúncios da Meta (campanhas, conjuntos, anúncios e métricas). */
+export async function syncMetaAccount(db: SupabaseClient, account: { id: string; agency_id: string; external_id: string }, token: string) {
   const act = account.external_id; // "act_123"
   const range = JSON.stringify({ since: daysAgo(DAYS - 1), until: today() });
+  const now = new Date().toISOString();
 
-  // 1) Campanhas
-  const camps = await graphList<MetaCampaign>(`${act}/campaigns`, {
-    access_token: token,
-    fields: "id,name,objective,effective_status,daily_budget,lifetime_budget,stop_time",
-  });
+  const [camps, daily, campTotals, adsets, adsetTotals, ads, adTotals] = await Promise.all([
+    graphList<MetaCampaign>(`${act}/campaigns`, {
+      access_token: token,
+      fields: "id,name,objective,effective_status,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time",
+    }),
+    graphList<Insight>(`${act}/insights`, {
+      access_token: token,
+      level: "campaign",
+      time_increment: "1",
+      time_range: range,
+      fields: `campaign_id,${METRIC_FIELDS}`,
+    }),
+    graphList<Insight>(`${act}/insights`, { access_token: token, level: "campaign", time_range: range, fields: `campaign_id,${METRIC_FIELDS}` }),
+    graphList<MetaAdSet>(`${act}/adsets`, {
+      access_token: token,
+      fields: "id,name,campaign_id,effective_status,daily_budget,lifetime_budget,optimization_goal,billing_event,bid_strategy,promoted_object,targeting,start_time,end_time",
+      effective_status: JSON.stringify(["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "IN_PROCESS", "WITH_ISSUES"]),
+    }),
+    graphList<Insight>(`${act}/insights`, { access_token: token, level: "adset", time_range: range, fields: `adset_id,${METRIC_FIELDS}` }),
+    graphList<MetaAd>(`${act}/ads`, {
+      access_token: token,
+      fields:
+        "id,name,effective_status,campaign_id,adset_id,preview_shareable_link,creative{id,title,body,image_url,thumbnail_url,object_type,video_id,call_to_action_type,effective_object_story_id,instagram_permalink_url,asset_feed_spec,object_story_spec}",
+      effective_status: JSON.stringify(["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]),
+    }),
+    graphList<Insight>(`${act}/insights`, { access_token: token, level: "ad", time_range: range, fields: `ad_id,${METRIC_FIELDS}` }),
+  ]);
 
-  // 2) Métricas diárias por campanha
-  const daily = await graphList<Insight>(`${act}/insights`, {
-    access_token: token,
-    level: "campaign",
-    time_increment: "1",
-    time_range: range,
-    fields: "campaign_id,spend,impressions,reach,clicks,actions,action_values",
-  });
+  const campTot = new Map(campTotals.map((r) => [r.campaign_id!, metricsFromInsight(r as unknown as Record<string, unknown>)]));
+  const setTot = new Map(adsetTotals.map((r) => [r.adset_id!, metricsFromInsight(r as unknown as Record<string, unknown>)]));
+  const adTot = new Map(adTotals.map((r) => [r.ad_id!, metricsFromInsight(r as unknown as Record<string, unknown>)]));
 
-  // 3) Alcance do período (alcance não pode ser somado dia a dia)
-  const reachRows = await graphList<Insight>(`${act}/insights`, {
-    access_token: token,
-    level: "campaign",
-    time_range: range,
-    fields: "campaign_id,reach",
-  });
-  const reachBy = new Map(reachRows.map((r) => [r.campaign_id!, Number(r.reach) || 0]));
-
-  // Só guardamos campanhas que tiveram entrega no período ou estão ativas
+  // ---------- Campanhas ----------
   const withData = new Set(daily.map((d) => d.campaign_id));
   const relevant = camps.filter((c) => withData.has(c.id) || c.effective_status === "ACTIVE");
 
@@ -145,22 +179,28 @@ export async function syncMetaAccount(
         external_id: c.id,
         name: c.name,
         objective: OBJECTIVES[c.objective ?? ""] ?? c.objective ?? "",
+        objective_raw: c.objective ?? "",
         status: statusOf(c.effective_status, c.stop_time),
-        daily_budget: Number(c.daily_budget ?? 0) / 100,
-        reach_30d: reachBy.get(c.id) ?? 0,
-        updated_at: new Date().toISOString(),
+        effective_status: c.effective_status,
+        bid_strategy: c.bid_strategy ?? "",
+        daily_budget: money(c.daily_budget),
+        lifetime_budget: money(c.lifetime_budget),
+        start_time: c.start_time ?? null,
+        stop_time: c.stop_time ?? null,
+        reach_30d: campTot.get(c.id)?.reach ?? 0,
+        metrics_30d: campTot.get(c.id) ?? {},
+        updated_at: now,
       })),
       { onConflict: "ad_account_id,external_id" },
     )
     .select("id, external_id");
   if (error) throw new Error(error.message);
-
-  const idOf = new Map((saved ?? []).map((s) => [s.external_id as string, s.id as string]));
+  const campId = new Map((saved ?? []).map((s) => [s.external_id as string, s.id as string]));
 
   const dailyRows = daily
-    .filter((d) => idOf.has(d.campaign_id!))
+    .filter((d) => campId.has(d.campaign_id!))
     .map((d) => ({
-      campaign_id: idOf.get(d.campaign_id!)!,
+      campaign_id: campId.get(d.campaign_id!)!,
       agency_id: account.agency_id,
       date: d.date_start,
       spend: Number(d.spend) || 0,
@@ -175,78 +215,124 @@ export async function syncMetaAccount(
     if (e) throw new Error(e.message);
   }
 
-  // 4) Anúncios / criativos + resultados por anúncio
-  const ads = await graphList<MetaAd>(`${act}/ads`, {
-    access_token: token,
-    fields:
-      "id,name,effective_status,campaign_id,creative{id,title,body,image_url,thumbnail_url,object_type,video_id,asset_feed_spec,object_story_spec}",
-    effective_status: JSON.stringify(["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]),
-  });
-  const adStats = await graphList<Insight>(`${act}/insights`, {
-    access_token: token,
-    level: "ad",
-    time_range: range,
-    fields: "ad_id,spend,impressions,clicks,actions",
-  });
-  const statBy = new Map(adStats.map((s) => [s.ad_id!, s]));
+  // ---------- Conjuntos de anúncios ----------
+  const setRows = adsets
+    .filter((s) => campId.has(s.campaign_id))
+    .map((s) => ({
+      agency_id: account.agency_id,
+      campaign_id: campId.get(s.campaign_id)!,
+      external_id: s.id,
+      name: s.name,
+      status: statusOf(s.effective_status, s.end_time),
+      effective_status: s.effective_status,
+      daily_budget: money(s.daily_budget),
+      lifetime_budget: money(s.lifetime_budget),
+      optimization_goal: s.optimization_goal ?? "",
+      billing_event: s.billing_event ?? "",
+      bid_strategy: s.bid_strategy ?? "",
+      promoted_object: s.promoted_object ?? null,
+      targeting: s.targeting ?? null,
+      start_time: s.start_time ?? null,
+      end_time: s.end_time ?? null,
+      metrics_30d: setTot.get(s.id) ?? {},
+      updated_at: now,
+    }));
+  const setId = new Map<string, string>();
+  const setGoal = new Map<string, { goal: string; promoted: Record<string, unknown> | null }>();
+  for (let i = 0; i < setRows.length; i += 300) {
+    const { data, error: e } = await db.from("ad_sets").upsert(setRows.slice(i, i + 300), { onConflict: "campaign_id,external_id" }).select("id, external_id");
+    if (e) throw new Error(e.message);
+    for (const r of data ?? []) setId.set(r.external_id, r.id);
+  }
+  for (const s of adsets) setGoal.set(s.id, { goal: s.optimization_goal ?? "", promoted: s.promoted_object ?? null });
 
+  // ---------- Vídeos: tenta obter o link do arquivo e a capa ----------
+  const videoIds = [...new Set(ads.map((a) => a.creative?.video_id ?? a.creative?.object_story_spec?.video_data?.video_id ?? a.creative?.asset_feed_spec?.videos?.[0]?.video_id).filter(Boolean) as string[])];
+  const videos = new Map<string, { source?: string; picture?: string }>();
+  for (let i = 0; i < videoIds.length; i += 50) {
+    try {
+      const res = await graphGet<Record<string, { source?: string; picture?: string }>>("", {
+        access_token: token,
+        ids: videoIds.slice(i, i + 50).join(","),
+        fields: "source,picture",
+      });
+      for (const [id, v] of Object.entries(res)) videos.set(id, v);
+    } catch {
+      // sem permissão para algum vídeo: seguimos só com a capa do criativo
+    }
+  }
+
+  // ---------- Anúncios / criativos ----------
   const creatives = ads
-    .filter((a) => idOf.has(a.campaign_id))
+    .filter((a) => campId.has(a.campaign_id))
     .map((a) => {
       const cr = a.creative ?? ({} as NonNullable<MetaAd["creative"]>);
       const story = cr.object_story_spec;
-      const isVideo = !!cr.video_id || cr.object_type === "VIDEO" || !!story?.video_data;
+      const feed = cr.asset_feed_spec;
+      const videoId = cr.video_id ?? story?.video_data?.video_id ?? feed?.videos?.[0]?.video_id;
+      const isVideo = !!videoId || cr.object_type === "VIDEO";
       const isCarousel = (story?.link_data?.child_attachments?.length ?? 0) > 0;
       const format: CreativeFormat = isVideo ? "video" : isCarousel ? "carousel" : "image";
-      const st = statBy.get(a.id);
+      const m = adTot.get(a.id);
+      const g = setGoal.get(a.adset_id);
+      const result = computeResult(m, g?.goal, g?.promoted as { custom_event_type?: string } | null);
+      const video = videoId ? videos.get(videoId) : undefined;
       return {
         agency_id: account.agency_id,
-        campaign_id: idOf.get(a.campaign_id)!,
+        campaign_id: campId.get(a.campaign_id)!,
+        ad_set_id: setId.get(a.adset_id) ?? null,
         external_id: a.id,
+        creative_id: cr.id ?? null,
         name: a.name,
         format,
-        headline: cr.title ?? story?.link_data?.name ?? story?.video_data?.title ?? cr.asset_feed_spec?.titles?.[0]?.text ?? "",
-        body: cr.body ?? story?.link_data?.message ?? story?.video_data?.message ?? cr.asset_feed_spec?.bodies?.[0]?.text ?? "",
-        image_url: cr.image_url ?? story?.link_data?.picture ?? story?.video_data?.image_url ?? cr.thumbnail_url ?? null,
+        headline: cr.title ?? story?.link_data?.name ?? story?.video_data?.title ?? feed?.titles?.[0]?.text ?? "",
+        body: cr.body ?? story?.link_data?.message ?? story?.video_data?.message ?? feed?.bodies?.[0]?.text ?? "",
+        image_url: cr.image_url ?? story?.link_data?.picture ?? story?.video_data?.image_url ?? feed?.images?.[0]?.url ?? video?.picture ?? cr.thumbnail_url ?? null,
+        thumbnail_url: cr.thumbnail_url ?? video?.picture ?? null,
+        video_id: videoId ?? null,
+        video_url: video?.source ?? null,
+        cta: cr.call_to_action_type ?? story?.link_data?.call_to_action?.type ?? story?.video_data?.call_to_action?.type ?? null,
+        link_url: story?.link_data?.link ?? story?.video_data?.call_to_action?.value?.link ?? feed?.link_urls?.[0]?.website_url ?? null,
+        preview_url: a.preview_shareable_link ?? null,
+        permalink_url: cr.instagram_permalink_url ?? (cr.effective_object_story_id ? `https://www.facebook.com/${cr.effective_object_story_id}` : null),
         active: a.effective_status === "ACTIVE",
-        impressions: Number(st?.impressions) || 0,
-        clicks: Number(st?.clicks) || 0,
-        spend: Number(st?.spend) || 0,
-        conversions: conversionsOf(st?.actions),
-        updated_at: new Date().toISOString(),
+        effective_status: a.effective_status,
+        impressions: m?.impressions ?? 0,
+        reach: m?.reach ?? 0,
+        clicks: m?.clicks ?? 0,
+        spend: m?.spend ?? 0,
+        conversions: result && result.type !== "reach" && result.type !== "impressions" ? result.value : conversionsOf(m?.actions),
+        metrics_30d: m ?? {},
+        updated_at: now,
       };
     });
-  for (let i = 0; i < creatives.length; i += 500) {
-    const { error: e } = await db.from("creatives").upsert(creatives.slice(i, i + 500), { onConflict: "campaign_id,external_id" });
+  for (let i = 0; i < creatives.length; i += 300) {
+    const { error: e } = await db.from("creatives").upsert(creatives.slice(i, i + 300), { onConflict: "campaign_id,external_id" });
     if (e) throw new Error(e.message);
   }
 
-  return { campaigns: relevant.length, days: dailyRows.length, creatives: creatives.length };
+  return { campaigns: relevant.length, adsets: setRows.length, ads: creatives.length, days: dailyRows.length };
 }
 
 /** Sincroniza todas as contas Meta ativas de uma agência (ou de todas, se agencyId for omitido). */
 export async function syncMeta(db: SupabaseClient, agencyId?: string) {
-  let q = db
-    .from("ad_accounts")
-    .select("id, agency_id, external_id, platform_connections(access_token)")
-    .eq("platform", "meta")
-    .eq("sync_enabled", true);
+  let q = db.from("ad_accounts").select("id, agency_id, external_id, platform_connections(access_token)").eq("platform", "meta").eq("sync_enabled", true);
   if (agencyId) q = q.eq("agency_id", agencyId);
   const { data: accounts, error } = await q;
   if (error) throw new Error(error.message);
 
-  const results: { account: string; ok: boolean; error?: string }[] = [];
+  const results: { account: string; agency: string; ok: boolean; error?: string }[] = [];
   for (const a of accounts ?? []) {
     const conn = (Array.isArray(a.platform_connections) ? a.platform_connections[0] : a.platform_connections) as { access_token: string } | null;
     if (!conn) continue;
     try {
       await syncMetaAccount(db, a, conn.access_token);
       await db.from("ad_accounts").update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", a.id);
-      results.push({ account: a.external_id, ok: true });
+      results.push({ account: a.external_id, agency: a.agency_id, ok: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await db.from("ad_accounts").update({ last_error: msg.slice(0, 500) }).eq("id", a.id);
-      results.push({ account: a.external_id, ok: false, error: msg });
+      results.push({ account: a.external_id, agency: a.agency_id, ok: false, error: msg });
     }
   }
   return results;
