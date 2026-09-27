@@ -3,3 +3,6 @@ node_modules
 .env*.local
 *.tsbuildinfo
 next-env.d.ts
+
+# SQL com senha do agendador
+supabase/*.local.sql
