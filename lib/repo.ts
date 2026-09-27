@@ -1,0 +1,146 @@
+import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Campaign, Client, Creative, DailyPoint } from "./types";
+
+const DAYS = 30;
+
+function spToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+}
+export function lastDays(n = DAYS) {
+  const end = new Date(spToday() + "T12:00:00Z");
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(end);
+    d.setUTCDate(d.getUTCDate() - (n - 1 - i));
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+/** Busca todas as linhas, contornando o limite de 1000 por consulta. */
+async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+function hue(id: string) {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return 10 + (h % 30);
+}
+
+export interface AgencyData {
+  campaigns: Campaign[];
+  clients: Client[];
+  lastSync: string | null;
+}
+
+/**
+ * Carrega os dados do painel de uma agência (ou só de um cliente, no link compartilhado).
+ * `db` pode ser o cliente do usuário (segurança do banco aplicada) ou o administrativo.
+ */
+export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyClientId?: string): Promise<AgencyData> {
+  const days = lastDays();
+  const since = days[0];
+
+  let accQ = db.from("ad_accounts").select("id, client_id, platform, external_id, name, last_synced_at").eq("agency_id", agencyId);
+  if (onlyClientId) accQ = accQ.eq("client_id", onlyClientId);
+  const { data: accounts } = await accQ;
+  const accById = new Map((accounts ?? []).map((a) => [a.id as string, a]));
+
+  let cliQ = db.from("clients").select("id, name, segment").eq("agency_id", agencyId).order("name");
+  if (onlyClientId) cliQ = cliQ.eq("id", onlyClientId);
+  const { data: clientRows } = await cliQ;
+
+  const clients: Client[] = (clientRows ?? []).map((c) => {
+    const accs = (accounts ?? []).filter((a) => a.client_id === c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      segment: c.segment,
+      metaAccountId: accs.filter((a) => a.platform === "meta").map((a) => a.external_id).join(", ") || undefined,
+      googleCustomerId: accs.filter((a) => a.platform === "google").map((a) => a.external_id).join(", ") || undefined,
+    };
+  });
+
+  const accountIds = [...accById.keys()];
+  if (!accountIds.length) return { campaigns: [], clients, lastSync: null };
+
+  const camps = await fetchAll<{ id: string; ad_account_id: string; platform: "meta" | "google"; name: string; objective: string; status: Campaign["status"]; daily_budget: number; reach_30d: number }>((a, b) =>
+    db.from("campaigns").select("id, ad_account_id, platform, name, objective, status, daily_budget, reach_30d").in("ad_account_id", accountIds).range(a, b),
+  );
+  const campIds = camps.map((c) => c.id);
+
+  const dailyRows = campIds.length
+    ? await fetchAll<{ campaign_id: string; date: string; spend: number; impressions: number; clicks: number; conversions: number; revenue: number }>((a, b) =>
+        db.from("campaign_daily").select("campaign_id, date, spend, impressions, clicks, conversions, revenue").eq("agency_id", agencyId).gte("date", since).range(a, b),
+      )
+    : [];
+  const creativeRows = campIds.length
+    ? await fetchAll<{ id: string; campaign_id: string; name: string; format: Creative["format"]; headline: string; body: string; image_url: string | null; active: boolean; impressions: number; clicks: number; spend: number; conversions: number }>((a, b) =>
+        db.from("creatives").select("id, campaign_id, name, format, headline, body, image_url, active, impressions, clicks, spend, conversions").eq("agency_id", agencyId).range(a, b),
+      )
+    : [];
+
+  const dailyBy = new Map<string, Map<string, (typeof dailyRows)[number]>>();
+  for (const d of dailyRows) {
+    if (!dailyBy.has(d.campaign_id)) dailyBy.set(d.campaign_id, new Map());
+    dailyBy.get(d.campaign_id)!.set(d.date, d);
+  }
+  const crBy = new Map<string, Creative[]>();
+  for (const c of creativeRows) {
+    const list = crBy.get(c.campaign_id) ?? [];
+    list.push({
+      id: c.id,
+      name: c.name,
+      format: c.format,
+      headline: c.headline || c.name,
+      body: c.body,
+      hue: hue(c.id),
+      imageUrl: c.image_url ?? undefined,
+      impressions: Number(c.impressions),
+      clicks: Number(c.clicks),
+      spend: Number(c.spend),
+      conversions: Number(c.conversions),
+      active: c.active,
+    });
+    crBy.set(c.campaign_id, list);
+  }
+
+  const campaigns: Campaign[] = camps
+    .map((c) => {
+      const byDate = dailyBy.get(c.id);
+      const daily: DailyPoint[] = days.map((date) => {
+        const r = byDate?.get(date);
+        return {
+          date,
+          spend: Number(r?.spend ?? 0),
+          impressions: Number(r?.impressions ?? 0),
+          clicks: Number(r?.clicks ?? 0),
+          conversions: Number(r?.conversions ?? 0),
+          revenue: Number(r?.revenue ?? 0),
+        };
+      });
+      return {
+        id: c.id,
+        clientId: (accById.get(c.ad_account_id)?.client_id as string) ?? "",
+        platform: c.platform,
+        name: c.name,
+        objective: c.objective,
+        status: c.status,
+        dailyBudget: Number(c.daily_budget),
+        reach: Number(c.reach_30d),
+        daily,
+        creatives: crBy.get(c.id) ?? [],
+      };
+    })
+    .filter((c) => c.status === "active" || c.daily.some((d) => d.spend > 0));
+
+  const syncs = (accounts ?? []).map((a) => a.last_synced_at as string | null).filter(Boolean) as string[];
+  return { campaigns, clients, lastSync: syncs.sort().at(-1) ?? null };
+}

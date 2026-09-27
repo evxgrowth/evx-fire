@@ -1,0 +1,338 @@
+@import "tailwindcss";
+
+@theme {
+  --color-coal-950: #060403;
+  --color-coal-900: #0c0907;
+  --color-coal-850: #110c0a;
+  --color-coal-800: #17110e;
+  --color-coal-700: #221a15;
+  --color-coal-600: #30251e;
+  --color-coal-500: #4a3a30;
+
+  --color-ash-100: #f7f1ec;
+  --color-ash-200: #e6dcd4;
+  --color-ash-300: #bfb1a6;
+  --color-ash-400: #8f8177;
+  --color-ash-500: #685c54;
+
+  --color-fire-200: #ffd9b0;
+  --color-fire-300: #ffbd7a;
+  --color-fire-400: #ff9a3d;
+  --color-fire-500: #ff7a1a;
+  --color-fire-600: #ff5c00;
+  --color-fire-700: #d94400;
+
+  /* Cores das séries nos gráficos (validadas p/ fundo escuro) */
+  --color-meta: #ff6a00;
+  --color-google: #f3e6d8;
+
+  --color-good: #3ddc84;
+  --color-warn: #ffc53d;
+  --color-bad: #ff4d4f;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-coal-950);
+  color: var(--color-ash-100);
+}
+
+body {
+  background-image:
+    radial-gradient(1200px 500px at 50% 115%, rgba(255, 92, 0, 0.16), transparent 60%),
+    radial-gradient(700px 400px at 100% 0%, rgba(255, 122, 26, 0.06), transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(255, 122, 26, 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-coal-600) transparent;
+}
+
+/* ---------- Cartões de vidro ---------- */
+.glass {
+  background: linear-gradient(180deg, rgba(28, 20, 16, 0.72), rgba(14, 10, 8, 0.72));
+  border: 1px solid rgba(255, 122, 26, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 20px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 20px 40px -24px rgba(0, 0, 0, 0.8);
+  transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+}
+
+.glass-hover:hover {
+  border-color: rgba(255, 122, 26, 0.35);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(255, 122, 26, 0.08),
+    0 18px 50px -20px rgba(255, 92, 0, 0.35);
+}
+
+/* ---------- Borda neon girando ---------- */
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.neon-ring {
+  position: relative;
+  isolation: isolate;
+}
+.neon-ring::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--angle),
+    transparent 0deg,
+    rgba(255, 122, 26, 0.9) 60deg,
+    rgba(255, 240, 220, 0.9) 90deg,
+    rgba(255, 92, 0, 0.9) 120deg,
+    transparent 180deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: spin-angle 5s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+@keyframes spin-angle {
+  to {
+    --angle: 360deg;
+  }
+}
+
+/* ---------- Texto de fogo ---------- */
+.text-fire {
+  background: linear-gradient(100deg, #fff 0%, #ffd9b0 25%, #ff9a3d 50%, #ff5c00 70%, #ffd9b0 90%, #fff 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: fire-sweep 6s ease-in-out infinite;
+}
+@keyframes fire-sweep {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.neon-text {
+  text-shadow:
+    0 0 6px rgba(255, 122, 26, 0.7),
+    0 0 18px rgba(255, 92, 0, 0.45),
+    0 0 40px rgba(255, 92, 0, 0.25);
+}
+
+/* ---------- LEDs de status ---------- */
+.led {
+  --led: var(--color-good);
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--led);
+  box-shadow:
+    0 0 6px var(--led),
+    0 0 14px color-mix(in srgb, var(--led) 60%, transparent);
+  flex-shrink: 0;
+}
+.led::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1px solid var(--led);
+  opacity: 0;
+  animation: led-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.led-active {
+  --led: var(--color-good);
+}
+.led-learning {
+  --led: var(--color-warn);
+}
+.led-paused {
+  --led: var(--color-ash-400);
+  box-shadow: none;
+}
+.led-paused::after,
+.led-ended::after {
+  display: none;
+}
+.led-ended {
+  --led: var(--color-bad);
+  box-shadow: 0 0 6px rgba(255, 77, 79, 0.5);
+}
+.led-fire {
+  --led: var(--color-fire-500);
+}
+@keyframes led-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* ---------- Chama do logo ---------- */
+.flame-outer {
+  transform-origin: 50% 100%;
+  animation: flame-dance 1.6s ease-in-out infinite alternate;
+}
+.flame-inner {
+  transform-origin: 50% 100%;
+  animation: flame-dance 1.1s ease-in-out infinite alternate-reverse;
+}
+@keyframes flame-dance {
+  0% {
+    transform: scale(1, 1) skewX(0deg);
+  }
+  33% {
+    transform: scale(0.96, 1.05) skewX(2deg);
+  }
+  66% {
+    transform: scale(1.03, 0.97) skewX(-2deg);
+  }
+  100% {
+    transform: scale(0.98, 1.06) skewX(1deg);
+  }
+}
+.flame-glow {
+  animation: glow-pulse 2.4s ease-in-out infinite;
+}
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Faixa de "brasa" nos cartões ---------- */
+.ember-line {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff5c00, #ffd9b0, #ff5c00, transparent);
+  background-size: 200% 100%;
+  animation: ember-move 3s linear infinite;
+}
+@keyframes ember-move {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* ---------- Skeleton shimmer ---------- */
+.shimmer {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.02), rgba(255, 154, 61, 0.08), rgba(255, 255, 255, 0.02));
+  background-size: 200% 100%;
+  animation: ember-move 1.6s linear infinite;
+}
+
+/* ---------- Botão principal ---------- */
+.btn-fire {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a0a00;
+  background: linear-gradient(135deg, #ffd9b0, #ff9a3d 40%, #ff5c00);
+  box-shadow:
+    0 0 0 1px rgba(255, 180, 120, 0.5) inset,
+    0 8px 30px -8px rgba(255, 92, 0, 0.7);
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+}
+.btn-fire:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 200, 150, 0.7) inset,
+    0 12px 40px -8px rgba(255, 92, 0, 0.9);
+}
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--color-ash-200);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s;
+}
+.btn-ghost:hover {
+  border-color: rgba(255, 122, 26, 0.4);
+  color: #fff;
+  background: rgba(255, 122, 26, 0.08);
+}
+
+.input {
+  width: 100%;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input:focus {
+  border-color: rgba(255, 122, 26, 0.6);
+  box-shadow: 0 0 0 4px rgba(255, 122, 26, 0.12);
+}
+
+/* Recharts: sem contorno de foco feio */
+.recharts-wrapper *:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
