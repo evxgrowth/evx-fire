@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 /** Configuração inicial: cria o Super Admin. Só funciona enquanto não existir nenhum. */
 export default async function SetupPage() {
   const db = createAdminClient();
-  const { count, error } = await db.from("profiles").select("id", { count: "exact", head: true }).eq("role", "super_admin");
+  const { data: admins, error } = await db.from("profiles").select("id").eq("role", "super_admin").limit(1);
+  const count = admins?.length ?? 0;
 
   if (error) {
     return (
