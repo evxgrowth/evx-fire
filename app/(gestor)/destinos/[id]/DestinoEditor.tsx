@@ -170,6 +170,11 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
   const toggleIn = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
   const preview = useMemo(() => applyFilters(tree, f), [tree, f]);
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of tree) if (a.client_id && a.client) m.set(a.client_id, a.client);
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [tree]);
   const counts = countTree(preview);
   const total = countTree(tree);
 
@@ -309,6 +314,30 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
 
           {f.mode === "rules" && (
             <div className="space-y-5">
+              <div>
+                <div className="mb-2 text-xs font-medium text-ash-300">Clientes <span className="text-ash-500">(nenhum marcado = todos)</span></div>
+                <div className="flex flex-wrap gap-2">
+                  {clientOptions.map((c) => (
+                    <Chip key={c.id} on={f.clients.includes(c.id)} onClick={() => set("clients", toggleIn(f.clients, c.id))}>
+                      {c.name}
+                    </Chip>
+                  ))}
+                  {!clientOptions.length && <span className="text-xs text-ash-500">Nenhum cliente vinculado às contas.</span>}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 text-xs font-medium text-ash-300">Tipo de campanha</div>
+                <div className="flex flex-wrap gap-2">
+                  <Chip on={f.sources.includes("api")} onClick={() => set("sources", toggleIn(f.sources, "api"))}>
+                    Conectadas (Meta/Google)
+                  </Chip>
+                  <Chip on={f.sources.includes("manual")} onClick={() => set("sources", toggleIn(f.sources, "manual"))}>
+                    Manuais
+                  </Chip>
+                </div>
+              </div>
+
               <div>
                 <div className="mb-2 text-xs font-medium text-ash-300">Contas de anúncio <span className="text-ash-500">(nenhuma marcada = todas)</span></div>
                 <div className="flex flex-wrap gap-2">

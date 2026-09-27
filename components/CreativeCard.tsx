@@ -16,6 +16,9 @@ const formatInfo = {
 /** Prévia do criativo. Quando a API trouxer a imagem real, usamos imageUrl. */
 export function CreativeThumb({ c }: { c: Creative }) {
   const F = formatInfo[c.format];
+  if (!c.imageUrl && c.videoUrl) {
+    return <video src={c.videoUrl} className="h-full w-full object-cover" muted loop playsInline preload="metadata" />;
+  }
   if (c.imageUrl) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={c.imageUrl} alt={c.headline} className="h-full w-full object-cover" />;

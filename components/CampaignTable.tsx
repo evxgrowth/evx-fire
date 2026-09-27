@@ -40,7 +40,10 @@ export default function CampaignTable({ campaigns, linkBase }: { campaigns: Camp
                   <div className="flex items-center gap-3">
                     <PlatformBadge platform={c.platform} withLabel={false} />
                     <div className="min-w-0">
-                      <div className="max-w-[280px] truncate font-medium text-white">{c.name}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="max-w-[280px] truncate font-medium text-white">{c.name}</span>
+                        {c.source === "manual" && <span className="shrink-0 rounded border border-white/15 px-1.5 py-px text-[9px] uppercase tracking-wider text-ash-300">Manual</span>}
+                      </div>
                       <div className="text-[11px] text-ash-400">
                         {clientById(c.clientId)?.name} · {c.objective}
                       </div>

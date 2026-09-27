@@ -11,19 +11,27 @@ function refresh() {
   revalidatePath("/", "layout");
 }
 
-export async function createClientRecord(name: string, segment = "") {
+export async function createClientRecord(name: string, segment = "", notes = "") {
   const me = await requireManager();
   const db = await createClient();
-  const { data, error } = await db.from("clients").insert({ agency_id: me.agencyId, name: name.trim(), segment: segment.trim() }).select("id").single();
+  const { data, error } = await db.from("clients").insert({ agency_id: me.agencyId, name: name.trim(), segment: segment.trim(), notes: notes.trim() }).select("id").single();
   if (error) throw new Error(error.message);
   refresh();
   return data.id as string;
 }
 
-export async function updateClientRecord(id: string, name: string, segment: string) {
+export async function updateClientRecord(id: string, name: string, segment: string, notes = "") {
   await requireManager();
   const db = await createClient();
-  await db.from("clients").update({ name: name.trim(), segment: segment.trim() }).eq("id", id);
+  await db.from("clients").update({ name: name.trim(), segment: segment.trim(), notes: notes.trim() }).eq("id", id);
+  refresh();
+}
+
+/** Desativar esconde o cliente e as campanhas dele dos painéis, links e destinos. */
+export async function setClientActive(id: string, active: boolean) {
+  await requireManager();
+  const db = await createClient();
+  await db.from("clients").update({ active }).eq("id", id);
   refresh();
 }
 

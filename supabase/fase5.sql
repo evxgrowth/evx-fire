@@ -98,3 +98,75 @@ begin
       t);
   end loop;
 end $$;
+
+-- =====================================================================
+--  Fase 5b: correções de sincronização, clientes ativos/inativos,
+--  campanhas manuais, preferências e upload de criativos
+-- =====================================================================
+
+-- ---------- Contas: status na Meta e contas "manuais" ----------
+alter table public.ad_accounts add column if not exists account_status integer;
+alter table public.ad_accounts drop constraint if exists ad_accounts_platform_check;
+alter table public.ad_accounts add constraint ad_accounts_platform_check check (platform in ('meta','google','manual'));
+-- Correção: contas com pagamento pendente / carência também devem sincronizar
+update public.ad_accounts set sync_enabled = true where platform = 'meta' and last_synced_at is null;
+
+-- ---------- Clientes: ativo/inativo ----------
+alter table public.clients add column if not exists active boolean not null default true;
+alter table public.clients add column if not exists notes  text not null default '';
+
+-- ---------- Campanhas manuais ----------
+alter table public.campaigns add column if not exists source       text not null default 'api';
+alter table public.campaigns add column if not exists result_label text not null default '';
+alter table public.campaigns add column if not exists notes        text not null default '';
+alter table public.ad_sets   add column if not exists audience_notes text not null default '';
+alter table public.creatives add column if not exists media jsonb not null default '[]'::jsonb;
+
+create table if not exists public.manual_entries (
+  id          uuid primary key default gen_random_uuid(),
+  agency_id   uuid not null references public.agencies(id) on delete cascade,
+  campaign_id uuid not null references public.campaigns(id) on delete cascade,
+  period      text not null check (period in ('day','week','month')),
+  start_date  date not null,
+  end_date    date not null,
+  spend       numeric not null default 0,
+  impressions bigint  not null default 0,
+  reach       bigint  not null default 0,
+  clicks      bigint  not null default 0,
+  results     numeric not null default 0,
+  revenue     numeric not null default 0,
+  notes       text not null default '',
+  created_at  timestamptz not null default now()
+);
+create index if not exists idx_manual_entries_campaign on public.manual_entries(campaign_id);
+alter table public.manual_entries enable row level security;
+drop policy if exists manual_entries_rw on public.manual_entries;
+create policy manual_entries_rw on public.manual_entries for all
+  using (agency_id = public.my_agency_id() or public.is_super_admin())
+  with check (agency_id = public.my_agency_id());
+
+-- ---------- Preferências de cada gestor ----------
+create table if not exists public.user_preferences (
+  user_id    uuid primary key references auth.users(id) on delete cascade,
+  prefs      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.user_preferences enable row level security;
+drop policy if exists user_preferences_rw on public.user_preferences;
+create policy user_preferences_rw on public.user_preferences for all
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- ---------- Upload de criativos (Storage) ----------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('creatives', 'creatives', true, 52428800)
+on conflict (id) do nothing;
+
+drop policy if exists creatives_upload on storage.objects;
+create policy creatives_upload on storage.objects for insert to authenticated
+  with check (bucket_id = 'creatives' and (storage.foldername(name))[1] = public.my_agency_id()::text);
+drop policy if exists creatives_update on storage.objects;
+create policy creatives_update on storage.objects for update to authenticated
+  using (bucket_id = 'creatives' and (storage.foldername(name))[1] = public.my_agency_id()::text);
+drop policy if exists creatives_delete on storage.objects;
+create policy creatives_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'creatives' and (storage.foldername(name))[1] = public.my_agency_id()::text);

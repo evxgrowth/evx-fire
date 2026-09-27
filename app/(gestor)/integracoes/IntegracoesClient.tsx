@@ -19,7 +19,20 @@ export interface AccountRow {
   sync_enabled: boolean;
   last_synced_at: string | null;
   last_error: string | null;
+  account_status: number | null;
 }
+
+// Status da conta de anúncios na Meta
+const ACCOUNT_STATUS: Record<number, [string, "good" | "warn" | "bad"]> = {
+  1: ["Ativa", "good"],
+  2: ["Desativada", "bad"],
+  3: ["Pagamento pendente", "warn"],
+  7: ["Em análise de risco", "warn"],
+  8: ["Aguardando pagamento", "warn"],
+  9: ["Período de carência", "warn"],
+  100: ["Encerramento pendente", "bad"],
+  101: ["Encerrada", "bad"],
+};
 
 export function CopyBtn({ text }: { text: string }) {
   const [ok, setOk] = useState(false);
@@ -69,6 +82,7 @@ export default function IntegracoesClient({
   const [pending, start] = useTransition();
   const [syncing, setSyncing] = useState(false);
   const metaAccounts = accounts.filter((a) => a.platform === "meta");
+  // (contas "manuais" não aparecem aqui: são criadas pelas campanhas manuais)
   const daysLeft = meta?.expiresAt ? Math.round((new Date(meta.expiresAt).getTime() - Date.now()) / 86400000) : null;
 
   return (
@@ -184,7 +198,12 @@ export default function IntegracoesClient({
                         </span>
                         <div>
                           <div className="font-medium text-white">{a.name}</div>
-                          <div className="font-mono text-[11px] text-ash-400">{a.external_id}</div>
+                          <div className="flex items-center gap-2 font-mono text-[11px] text-ash-400">
+                            {a.external_id}
+                            {a.account_status != null && ACCOUNT_STATUS[a.account_status] && a.account_status !== 1 && (
+                              <span className={clsx("font-sans", ACCOUNT_STATUS[a.account_status][1] === "bad" ? "text-bad" : "text-warn")}>· {ACCOUNT_STATUS[a.account_status][0]}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>

@@ -1,7 +1,7 @@
 // Regras que definem O QUE cada destino (CRM / webhook) recebe.
 // Arquivo puro: usado na prévia da tela e no envio real.
 
-import type { CampaignStatus } from "@/lib/types";
+import type { CampaignStatus, Source } from "@/lib/types";
 
 export type Detail = "campaign" | "adset" | "ad";
 export type Scope = "campaign" | "adset" | "ad";
@@ -11,6 +11,10 @@ export interface DestFilters {
   mode: "all" | "rules" | "manual";
   /** contas de anúncio (ids internos). Vazio = todas */
   accounts: string[];
+  /** clientes (ids internos). Vazio = todos */
+  clients: string[];
+  /** campanhas conectadas (api) e/ou manuais. Vazio = ambas */
+  sources: Source[];
   /** status das campanhas. Vazio = todos */
   campaignStatuses: CampaignStatus[];
   /** status de conjuntos e anúncios. Vazio = todos */
@@ -30,6 +34,8 @@ export interface DestFilters {
 export const defaultFilters: DestFilters = {
   mode: "all",
   accounts: [],
+  clients: [],
+  sources: [],
   campaignStatuses: [],
   childStatuses: [],
   includeTerms: [],
@@ -62,12 +68,14 @@ export interface NodeCampaign {
   external_id: string;
   name: string;
   status: CampaignStatus;
+  source?: Source;
   adsets: NodeAdSet[];
 }
 export interface NodeAccount {
   id: string;
   external_id: string;
   name: string;
+  client_id?: string | null;
   campaigns: NodeCampaign[];
 }
 
@@ -93,7 +101,8 @@ export function applyFilters<A extends NodeAccount>(accounts: A[], raw: Partial<
   const out: A[] = [];
 
   for (const acc of accounts) {
-    if (f.mode !== "manual" && f.accounts.length && !f.accounts.includes(acc.id)) continue;
+    if (f.mode === "rules" && f.accounts.length && !f.accounts.includes(acc.id)) continue;
+    if (f.mode === "rules" && f.clients.length && !(acc.client_id && f.clients.includes(acc.client_id))) continue;
     const campaigns: NodeCampaign[] = [];
 
     for (const c of acc.campaigns) {
@@ -112,6 +121,7 @@ export function applyFilters<A extends NodeAccount>(accounts: A[], raw: Partial<
         }
       } else {
         if (f.campaignStatuses.length && !f.campaignStatuses.includes(c.status)) continue;
+        if (f.sources.length && !f.sources.includes(c.source ?? "api")) continue;
         const inc = f.includeTerms.filter((t) => t.trim());
         const exc = f.excludeTerms.filter((t) => t.trim());
 

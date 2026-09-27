@@ -22,10 +22,10 @@ function isoDay(offset: number) {
 }
 
 export const clients: Client[] = [
-  { id: "c1", name: "Vida Plena Home Care", segment: "Saúde", metaAccountId: "act_1029384756", googleCustomerId: "812-445-9921" },
-  { id: "c2", name: "Nova Estética", segment: "Estética", metaAccountId: "act_5647382910", googleCustomerId: "633-120-4471" },
-  { id: "c3", name: "Loja Brasa Store", segment: "E-commerce", metaAccountId: "act_9988776655", googleCustomerId: "445-981-2210" },
-  { id: "c4", name: "Imobiliária Horizonte", segment: "Imóveis", metaAccountId: "act_1122334455" },
+  { id: "c1", name: "Vida Plena Home Care", segment: "Saúde", active: true, metaAccountId: "act_1029384756", googleCustomerId: "812-445-9921" },
+  { id: "c2", name: "Nova Estética", segment: "Estética", active: true, metaAccountId: "act_5647382910", googleCustomerId: "633-120-4471" },
+  { id: "c3", name: "Loja Brasa Store", segment: "E-commerce", active: true, metaAccountId: "act_9988776655", googleCustomerId: "445-981-2210" },
+  { id: "c4", name: "Imobiliária Horizonte", segment: "Imóveis", active: true, metaAccountId: "act_1122334455" },
 ];
 
 const headlines = [
@@ -117,6 +117,7 @@ function buildCampaign(s: Seed, i: number): Campaign {
     id: `cmp-${i + 1}`,
     clientId: s.clientId,
     platform: s.platform,
+    source: "api",
     name: s.name,
     objective: s.objective,
     status: s.status,

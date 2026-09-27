@@ -133,7 +133,8 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
   const range = JSON.stringify({ since: daysAgo(DAYS - 1), until: today() });
   const now = new Date().toISOString();
 
-  const [camps, daily, campTotals, adsets, adsetTotals, ads, adTotals] = await Promise.all([
+  const [info, camps, daily, campTotals, adsets, adsetTotals, ads, adTotals] = await Promise.all([
+    graphGet<{ account_status?: number; name?: string }>(act, { access_token: token, fields: "account_status,name" }).catch(() => ({}) as { account_status?: number; name?: string }),
     graphList<MetaCampaign>(`${act}/campaigns`, {
       access_token: token,
       fields: "id,name,objective,effective_status,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time",
@@ -166,8 +167,9 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
   const adTot = new Map(adTotals.map((r) => [r.ad_id!, metricsFromInsight(r as unknown as Record<string, unknown>)]));
 
   // ---------- Campanhas ----------
+  // Todas, ativas e inativas. Arquivadas/excluídas só se tiveram gasto no período.
   const withData = new Set(daily.map((d) => d.campaign_id));
-  const relevant = camps.filter((c) => withData.has(c.id) || c.effective_status === "ACTIVE");
+  const relevant = camps.filter((c) => withData.has(c.id) || (c.effective_status !== "ARCHIVED" && c.effective_status !== "DELETED"));
 
   const { data: saved, error } = await db
     .from("campaigns")
@@ -311,6 +313,7 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
     if (e) throw new Error(e.message);
   }
 
+  if (info.account_status != null) await db.from("ad_accounts").update({ account_status: info.account_status }).eq("id", account.id);
   return { campaigns: relevant.length, adsets: setRows.length, ads: creatives.length, days: dailyRows.length };
 }
 
@@ -322,9 +325,14 @@ export async function syncMeta(db: SupabaseClient, agencyId?: string) {
   if (error) throw new Error(error.message);
 
   const results: { account: string; agency: string; ok: boolean; error?: string }[] = [];
-  for (const a of accounts ?? []) {
+  const queue = [...(accounts ?? [])];
+  // 4 contas em paralelo para caber no tempo máximo do servidor
+  const worker = async () => {
+    for (let a = queue.shift(); a; a = queue.shift()) await syncOne(a);
+  };
+  const syncOne = async (a: NonNullable<typeof accounts>[number]) => {
     const conn = (Array.isArray(a.platform_connections) ? a.platform_connections[0] : a.platform_connections) as { access_token: string } | null;
-    if (!conn) continue;
+    if (!conn) return;
     try {
       await syncMetaAccount(db, a, conn.access_token);
       await db.from("ad_accounts").update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", a.id);
@@ -334,6 +342,7 @@ export async function syncMeta(db: SupabaseClient, agencyId?: string) {
       await db.from("ad_accounts").update({ last_error: msg.slice(0, 500) }).eq("id", a.id);
       results.push({ account: a.external_id, agency: a.agency_id, ok: false, error: msg });
     }
-  }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
   return results;
 }

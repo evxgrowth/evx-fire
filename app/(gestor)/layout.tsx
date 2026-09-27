@@ -1,6 +1,7 @@
 import AppShell from "@/components/AppShell";
 import DataProvider from "@/components/DataProvider";
 import DemoBanner from "@/components/DemoBanner";
+import { PrefsProvider } from "@/components/Prefs";
 import { requireManager } from "@/lib/auth";
 import { loadAgencyData } from "@/lib/repo";
 import { createClient } from "@/lib/supabase/server";
@@ -16,9 +17,11 @@ export default async function GestorLayout({ children }: { children: React.React
   // Sem nenhuma conta conectada ainda: mostra a demonstração com um aviso.
   const { count } = await db.from("ad_accounts").select("id", { count: "exact", head: true }).eq("agency_id", me.agencyId);
   const demo = !count;
+  const { data: prefRow } = await db.from("user_preferences").select("prefs").eq("user_id", me.id).maybeSingle();
 
   return (
     <AppShell mode="gestor" user={{ name: me.fullName || me.email, role: me.agencyName, isSuperAdmin: me.role === "super_admin" }} lastSync={data.lastSync}>
+      <PrefsProvider initial={(prefRow?.prefs as Record<string, unknown>) ?? {}}>
       <DataProvider
         campaigns={demo ? demoCampaigns : data.campaigns}
         clients={demo ? demoClients : data.clients}
@@ -28,6 +31,7 @@ export default async function GestorLayout({ children }: { children: React.React
         <DemoBanner />
         {children}
       </DataProvider>
+      </PrefsProvider>
     </AppShell>
   );
 }

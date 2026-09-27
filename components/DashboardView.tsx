@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Banknote, Eye, MousePointerClick, Percent, ShoppingCart, Target, TrendingUp, Users } from "lucide-react";
 import { dailySeries, defaultFilters, filterCampaigns, previousTotals, topCreatives, totalsOf, type Filters } from "@/lib/data";
 import { useData } from "./DataProvider";
+import { usePref } from "./Prefs";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
 import KpiCard, { type KpiProps } from "./KpiCard";
 import FilterBar from "./FilterBar";
@@ -27,8 +28,12 @@ export default function DashboardView({
   hideRevenue?: boolean;
   hideCreatives?: boolean;
 }) {
-  const { campaigns: all } = useData();
-  const [filters, setFilters] = useState<Filters>({ ...defaultFilters, clientId: fixedClientId ?? "all" });
+  const { campaigns: all, clients } = useData();
+  const [saved, setFilters] = usePref<Filters>("dashboard.filters", defaultFilters);
+  // Cliente fixo (link do cliente) ou um cliente salvo que não existe mais → volta para "todos"
+  const filters: Filters = fixedClientId
+    ? { ...saved, clientId: fixedClientId }
+    : { ...saved, clientId: saved.clientId === "all" || clients.some((c) => c.id === saved.clientId) ? saved.clientId : "all" };
 
   const data = useMemo(() => {
     const list = filterCampaigns(all, filters);
@@ -45,9 +50,11 @@ export default function DashboardView({
       metaSpend: totalsOf(meta).spend,
       googleSpend: totalsOf(google).spend,
       creatives: topCreatives(list, 4),
+      tableList: list.filter((c) => c.status === "active" || c.daily.some((d) => d.spend > 0)),
       active: list.filter((c) => c.status === "active" || c.status === "learning").length,
     };
-  }, [all, filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, JSON.stringify(filters)]);
 
   const { totals: t, prev } = data;
   const delta = (k: keyof typeof t) => (prev && prev[k] ? ((t[k] - prev[k]) / prev[k]) * 100 : null);
@@ -126,8 +133,8 @@ export default function DashboardView({
         </Panel>
       </div>
 
-      <Panel title="Campanhas" subtitle="Ordenadas por investimento no período" delay={0.4}>
-        <CampaignTable campaigns={data.list} linkBase={campaignLinkBase} />
+      <Panel title="Campanhas" subtitle="Com veiculação no período, ordenadas por investimento" delay={0.4}>
+        <CampaignTable campaigns={data.tableList} linkBase={campaignLinkBase} />
       </Panel>
 
       {!hideCreatives && (

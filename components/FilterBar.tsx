@@ -81,7 +81,7 @@ export default function FilterBar({
           className="input !w-auto !py-2 !text-xs"
         >
           <option value="all">Todos os clientes</option>
-          {clients.map((c) => (
+          {clients.filter((c) => c.active).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>

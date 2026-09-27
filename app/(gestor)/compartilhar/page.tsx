@@ -8,7 +8,7 @@ export default async function CompartilharPage() {
   const db = await createClient();
   const [{ data: links }, { data: clients }] = await Promise.all([
     db.from("share_links").select("id, token, client_id, label, show_revenue, show_creatives, active, views, created_at").eq("agency_id", me.agencyId).order("created_at", { ascending: false }),
-    db.from("clients").select("id, name").eq("agency_id", me.agencyId).order("name"),
+    db.from("clients").select("id, name").eq("agency_id", me.agencyId).eq("active", true).order("name"),
   ]);
   return (
     <>

@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
 
     for (const a of accounts) {
       if (known.has(a.id)) {
-        await db.from("ad_accounts").update({ connection_id: conn.id, name: a.name, currency: a.currency }).eq("agency_id", me.agencyId).eq("external_id", a.id);
+        await db.from("ad_accounts").update({ connection_id: conn.id, name: a.name, currency: a.currency, account_status: a.account_status }).eq("agency_id", me.agencyId).eq("external_id", a.id);
         continue;
       }
       const { data: client } = await db.from("clients").insert({ agency_id: me.agencyId, name: a.name }).select("id").single();
@@ -61,7 +61,9 @@ export async function GET(req: NextRequest) {
         external_id: a.id,
         name: a.name,
         currency: a.currency,
-        sync_enabled: a.account_status === 1,
+        account_status: a.account_status,
+        // Só não sincroniza contas desativadas (2) ou encerradas (101)
+        sync_enabled: a.account_status !== 2 && a.account_status !== 101,
       });
     }
 

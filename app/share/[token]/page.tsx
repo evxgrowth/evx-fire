@@ -15,15 +15,15 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   const db = createAdminClient();
   const { data: link } = await db
     .from("share_links")
-    .select("id, agency_id, client_id, show_revenue, show_creatives, active, views, clients(name), agencies(name, status)")
+    .select("id, agency_id, client_id, show_revenue, show_creatives, active, views, clients(name, active), agencies(name, status)")
     .eq("token", token)
     .maybeSingle();
   if (!link) notFound();
 
   const agency = (Array.isArray(link.agencies) ? link.agencies[0] : link.agencies) as { name: string; status: string } | null;
-  const client = (Array.isArray(link.clients) ? link.clients[0] : link.clients) as { name: string } | null;
+  const client = (Array.isArray(link.clients) ? link.clients[0] : link.clients) as { name: string; active: boolean } | null;
 
-  if (!link.active || agency?.status === "suspended") {
+  if (!link.active || agency?.status === "suspended" || client?.active === false) {
     return (
       <div className="grid min-h-screen place-items-center p-6">
         <div className="glass max-w-md p-8 text-center">

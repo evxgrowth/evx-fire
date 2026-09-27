@@ -25,6 +25,7 @@ export default async function DestinoPage({ params }: { params: Promise<{ id: st
     id: a.id,
     external_id: a.external_id,
     name: a.name,
+    client_id: a.client_id ?? null,
     client: a.client?.name ?? null,
     campaigns: a.campaigns,
   }));

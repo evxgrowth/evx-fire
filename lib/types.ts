@@ -20,6 +20,9 @@ export interface Creative {
   name: string;
   format: CreativeFormat;
   headline: string;
+  media?: { type: "image" | "video"; url: string }[];
+  videoUrl?: string;
+  cta?: string;
   body: string;
   hue: number; // usado para gerar a prévia enquanto não há imagem real
   imageUrl?: string;
@@ -30,10 +33,13 @@ export interface Creative {
   active: boolean;
 }
 
+export type Source = "api" | "manual";
+
 export interface Campaign {
   id: string;
   clientId: string;
   platform: Platform;
+  source: Source;
   name: string;
   objective: string;
   status: CampaignStatus;
@@ -47,6 +53,8 @@ export interface Client {
   id: string;
   name: string;
   segment: string;
+  active: boolean;
+  notes?: string;
   metaAccountId?: string;
   googleCustomerId?: string;
 }

@@ -9,8 +9,8 @@ export default async function IntegracoesPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
 
   const [{ data: accounts }, { data: clients }, { data: destinations }] = await Promise.all([
-    db.from("ad_accounts").select("id, platform, external_id, name, client_id, sync_enabled, last_synced_at, last_error").eq("agency_id", me.agencyId).order("name"),
-    db.from("clients").select("id, name").eq("agency_id", me.agencyId).order("name"),
+    db.from("ad_accounts").select("id, platform, external_id, name, client_id, sync_enabled, last_synced_at, last_error, account_status").eq("agency_id", me.agencyId).order("name"),
+    db.from("clients").select("id, name").eq("agency_id", me.agencyId).eq("active", true).order("name"),
     db.from("destinations").select("id, name, url, active, last_sent_at, last_error").eq("agency_id", me.agencyId).order("created_at"),
   ]);
 

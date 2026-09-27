@@ -23,8 +23,9 @@ async function fetchAll(build: (from: number, to: number) => PromiseLike<{ data:
 // ---------- Público (targeting) em linguagem simples ----------
 const GENDERS: Record<number, string> = { 1: "Homens", 2: "Mulheres" };
 
-export function audienceOf(t: Row | null | undefined) {
-  if (!t) return null;
+export function audienceOf(t: Row | null | undefined, notes?: string) {
+  if (!t && !notes) return null;
+  t = t ?? {};
   const geo = t.geo_locations ?? {};
   const locations: string[] = [
     ...(geo.countries ?? []),
@@ -53,6 +54,7 @@ export function audienceOf(t: Row | null | undefined) {
     custom.length ? `Públicos: ${custom.join(", ")}` : null,
     excluded.length ? `Excluídos: ${excluded.join(", ")}` : null,
     advantage ? "Público Advantage+ ativado" : null,
+    notes?.trim() ? notes.trim() : null,
   ].filter(Boolean);
 
   return {
@@ -66,6 +68,7 @@ export function audienceOf(t: Row | null | undefined) {
     excluded_custom_audiences: excluded,
     advantage_audience: advantage,
     placements: placements.length ? placements : ["automáticos (Advantage+)"],
+    notes: notes?.trim() || null,
     raw: t,
   };
 }
@@ -104,7 +107,7 @@ function campaignResult(sets: { result: Result | null; spend: number }[], spend:
 
 // ---------- Carga ----------
 export interface AgencyTree {
-  tree: (NodeAccount & { currency: string; client: { id: string; name: string } | null })[];
+  tree: (NodeAccount & { currency: string; platform: string; client: { id: string; name: string } | null })[];
   campaigns: Map<string, Row>;
   adsets: Map<string, Row>;
   ads: Map<string, Row>;
@@ -117,7 +120,7 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
   const [{ data: agency }, { data: accounts }, { data: clients }] = await Promise.all([
     db.from("agencies").select("name").eq("id", agencyId).single(),
     db.from("ad_accounts").select("id, external_id, name, currency, client_id, platform").eq("agency_id", agencyId).order("name"),
-    db.from("clients").select("id, name").eq("agency_id", agencyId),
+    db.from("clients").select("id, name, active").eq("agency_id", agencyId),
   ]);
   const [camps, sets, ads, daily] = await Promise.all([
     fetchAll((a, b) => db.from("campaigns").select("*").eq("agency_id", agencyId).range(a, b)),
@@ -130,12 +133,16 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
   for (const d of daily) (dailyBy.get(d.campaign_id) ?? dailyBy.set(d.campaign_id, []).get(d.campaign_id)!).push(d);
   const clientBy = new Map((clients ?? []).map((c) => [c.id, c]));
 
-  const tree = (accounts ?? []).map((acc) => ({
+  // Clientes desativados não são enviados a nenhum destino
+  const inactive = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
+  const tree = (accounts ?? []).filter((acc) => !acc.client_id || !inactive.has(acc.client_id)).map((acc) => ({
     id: acc.id,
     external_id: acc.external_id,
     name: acc.name,
+    client_id: acc.client_id as string | null,
+    platform: acc.platform as string,
     currency: acc.currency,
-    client: acc.client_id ? (clientBy.get(acc.client_id) ?? null) : null,
+    client: acc.client_id ? (clientBy.get(acc.client_id) ? { id: acc.client_id, name: clientBy.get(acc.client_id)!.name } : null) : null,
     campaigns: camps
       .filter((c) => c.ad_account_id === acc.id)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -144,6 +151,7 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
         external_id: c.external_id,
         name: c.name,
         status: c.status,
+        source: c.source ?? "api",
         adsets: sets
           .filter((s) => s.campaign_id === c.id)
           .sort((a, b) => a.name.localeCompare(b.name))
@@ -201,8 +209,8 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
           conversion_event: s.promoted_object?.custom_event_type ?? null,
           start_time: s.start_time,
           end_time: s.end_time,
-          audience: audienceOf(s.targeting),
-          result,
+          audience: audienceOf(s.targeting, s.audience_notes),
+          result: c.source === "manual" ? null : result,
           metrics: { last_30d: metricsBlock(sm) },
           ads: sNode.ads.map((aNode) => {
             const a = data.ads.get(aNode.id)!;
@@ -222,11 +230,12 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
                 link_url: a.link_url,
                 image_url: a.image_url,
                 thumbnail_url: a.thumbnail_url,
-                video: a.video_id ? { id: a.video_id, source_url: a.video_url, thumbnail_url: a.thumbnail_url ?? a.image_url } : null,
+                video: a.video_id || a.video_url ? { id: a.video_id, source_url: a.video_url, thumbnail_url: a.thumbnail_url ?? a.image_url } : null,
+                media: a.media ?? [],
                 preview_url: a.preview_url,
                 permalink_url: a.permalink_url,
               },
-              result: computeResult(am, s.optimization_goal, s.promoted_object),
+              result: c.source === "manual" ? null : computeResult(am, s.optimization_goal, s.promoted_object),
               metrics: { last_30d: metricsBlock(am) },
             };
           }),
@@ -235,16 +244,22 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
 
       const cm = c.metrics_30d as Metrics;
       const fullAdsets = [...data.adsets.values()].filter((s) => s.campaign_id === c.id);
-      const result = campaignResult(
-        fullAdsets.map((s) => ({ result: computeResult(s.metrics_30d, s.optimization_goal, s.promoted_object), spend: Number(s.metrics_30d?.spend ?? 0) })),
-        Number(cm?.spend ?? 0),
-      );
+      const manual = c.source === "manual";
+      const manualResults = days.reduce((t, d) => t + Number(d.conversions), 0);
+      const result = manual
+        ? { type: "manual", label: c.result_label || "Resultados", value: manualResults, cost_per_result: manualResults > 0 ? +(Number(cm?.spend ?? 0) / manualResults).toFixed(2) : null }
+        : campaignResult(
+            fullAdsets.map((s) => ({ result: computeResult(s.metrics_30d, s.optimization_goal, s.promoted_object), spend: Number(s.metrics_30d?.spend ?? 0) })),
+            Number(cm?.spend ?? 0),
+          );
       const budgetLevel = Number(c.daily_budget) || Number(c.lifetime_budget) ? "campaign" : "adset";
 
       return {
         id: c.id,
         external_id: c.external_id,
         platform: c.platform,
+        source: c.source ?? "api",
+        client: full.client,
         name: c.name,
         status: c.status,
         effective_status: c.effective_status,
@@ -277,7 +292,7 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
     );
 
     return {
-      ad_account: { id: full.id, external_id: full.external_id, name: full.name, platform: "meta", currency: full.currency, client: full.client },
+      ad_account: { id: full.id, external_id: full.external_id, name: full.name, platform: full.platform, currency: full.currency, client: full.client },
       counts: {
         campaigns: campaigns.length,
         campaigns_active: campaigns.filter((c) => c.is_active).length,
