@@ -11,7 +11,7 @@ export async function POST() {
   const me = await getMe();
   if (!me?.agencyId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = createAdminClient();
-  const results = await syncMeta(db, me.agencyId);
+  const results = await syncMeta(db, me.agencyId, { force: true });
   const dispatched = await dispatchAgency(db, me.agencyId).catch(() => []);
   return NextResponse.json({ ok: results.every((r) => r.ok), results, dispatched });
 }

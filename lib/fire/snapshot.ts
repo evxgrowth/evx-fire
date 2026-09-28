@@ -124,20 +124,40 @@ export interface AgencyTree {
   ads: Map<string, Row>;
   daily: Map<string, Row[]>;
   agencyName: string;
+  range: { since: string; until: string };
 }
 
-export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Promise<AgencyTree> {
-  const since = lastDays()[0];
+/** Todos os dias entre duas datas (AAAA-MM-DD), inclusive. */
+export function dateRange(since: string, until: string) {
+  const out: string[] = [];
+  for (let d = new Date(since + "T12:00:00Z"); d.toISOString().slice(0, 10) <= until; d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10));
+  return out;
+}
+
+/** Carrega a árvore da agência. O histórico diário vai de `since` a `until` (padrão: últimos 90 dias). */
+export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts: { since?: string; until?: string; withDaily?: boolean } = {}): Promise<AgencyTree> {
+  const d90 = lastDays(90);
+  const since = opts.since ?? d90[0];
+  const until = opts.until ?? d90[d90.length - 1];
   const [{ data: agency }, { data: accounts }, { data: clients }] = await Promise.all([
     db.from("agencies").select("name").eq("id", agencyId).single(),
     db.from("ad_accounts").select("id, external_id, name, currency, client_id, platform, sync_enabled").eq("agency_id", agencyId).order("name"),
     db.from("clients").select("id, name, active").eq("agency_id", agencyId),
   ]);
-  const [camps, sets, ads, daily] = await Promise.all([
-    fetchAll((a, b) => db.from("campaigns").select("*").eq("agency_id", agencyId).range(a, b)),
-    fetchAll((a, b) => db.from("ad_sets").select("*").eq("agency_id", agencyId).range(a, b)),
-    fetchAll((a, b) => db.from("creatives").select("*").eq("agency_id", agencyId).range(a, b)),
-    fetchAll((a, b) => db.from("campaign_daily").select("campaign_id, date, spend, impressions, reach, clicks, conversions, revenue").eq("agency_id", agencyId).gte("date", since).order("date").range(a, b)),
+  // Só busca o que pode ser enviado: contas ativas de clientes ativos
+  const inactiveClients = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
+  const okAccounts = (accounts ?? []).filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactiveClients.has(acc.client_id))).map((acc) => acc.id as string);
+  const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 150) }, (_, i) => ids.slice(i * 150, i * 150 + 150));
+  const camps = (await Promise.all(chunks(okAccounts).map((ids) => fetchAll((a, b) => db.from("campaigns").select("*").in("ad_account_id", ids).range(a, b))))).flat();
+  const campIds = camps.map((c) => c.id as string);
+  const [sets, ads, daily] = await Promise.all([
+    Promise.all(chunks(campIds).map((ids) => fetchAll((a, b) => db.from("ad_sets").select("*").in("campaign_id", ids).range(a, b)))).then((x) => x.flat()),
+    Promise.all(chunks(campIds).map((ids) => fetchAll((a, b) => db.from("creatives").select("*").in("campaign_id", ids).range(a, b)))).then((x) => x.flat()),
+    Promise.all(
+      (opts.withDaily === false ? [] : chunks(campIds)).map((ids) =>
+        fetchAll((a, b) => db.from("campaign_daily").select("campaign_id, date, spend, impressions, reach, clicks, conversions, revenue").in("campaign_id", ids).gte("date", since).lte("date", until).order("date").range(a, b)),
+      ),
+    ).then((x) => x.flat()),
   ]);
 
   const dailyBy = new Map<string, Row[]>();
@@ -184,13 +204,14 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
     ads: new Map(ads.map((a) => [a.id, a])),
     daily: dailyBy,
     agencyName: agency?.name ?? "",
+    range: { since, until },
   };
 }
 
 // ---------- Pacote enviado ao CRM ----------
 export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilters>) {
-  const allDays = lastDays();
-  const today = allDays[allDays.length - 1];
+  const allDays = dateRange(data.range.since, data.range.until);
+  const today = lastDays(1)[0];
   const f = normalizeFilters(filters);
   const keptBy = new Map(applyFilters(data.tree, f).map((a) => [a.id, a]));
   // Toda conta dentro do escopo gera um pacote, mesmo vazio: assim o CRM sabe o que remover.
@@ -293,8 +314,9 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
           today: todayRow
             ? { spend: Number(todayRow.spend), impressions: Number(todayRow.impressions), reach: Number(todayRow.reach), clicks: Number(todayRow.clicks), conversions: Number(todayRow.conversions), revenue: Number(todayRow.revenue) }
             : { spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, revenue: 0 },
-          // Todos os dias do período, com zero onde não houve veiculação
-          daily: allDays.map((date) => {
+          // Todos os dias do período, com zero onde não houve veiculação.
+          // Campanha sem nenhuma veiculação no período vem com a lista vazia (economiza envio).
+          daily: (days.length ? allDays : []).map((date) => {
             const d = days.find((x) => x.date === date);
             return { date, spend: Number(d?.spend ?? 0), impressions: Number(d?.impressions ?? 0), reach: Number(d?.reach ?? 0), clicks: Number(d?.clicks ?? 0), conversions: Number(d?.conversions ?? 0), revenue: Number(d?.revenue ?? 0) };
           }),

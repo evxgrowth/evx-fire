@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    await syncMeta(db, me.agencyId);
+    await syncMeta(db, me.agencyId, { force: true });
     await dispatchAgency(db, me.agencyId).catch(() => null);
     const res = back(`meta=ok&contas=${accounts.length}`);
     res.cookies.delete("meta_oauth_state");

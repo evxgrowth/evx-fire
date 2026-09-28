@@ -87,7 +87,7 @@ export async function testDestination(id: string) {
 export async function sendNow(id: string) {
   const { dest } = await own(id);
   if (!dest.url) return { sent: 0, failed: 0, error: "Preencha e salve o endereço do webhook primeiro." };
-  const r = await sendSnapshot(createAdminClient(), dest);
+  const r = await sendSnapshot(createAdminClient(), dest, undefined, { force: true });
   revalidatePath(`/destinos/${id}`);
   return { ...r, error: null };
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac, randomUUID } from "crypto";
+import { createHash, createHmac, randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { lastDays } from "@/lib/repo";
 import { buildAccountPayloads, loadAgencyTree, PAYLOAD_VERSION, type AgencyTree } from "./snapshot";
@@ -18,8 +18,9 @@ export function sign(secret: string, timestamp: string, body: string) {
   return "sha256=" + createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
 }
 
-function envelope(event: string, dest: Destination, agencyName: string, data: unknown) {
-  const days = lastDays();
+function envelope(event: string, dest: Destination, agencyName: string, data: unknown, range?: { since: string; until: string }) {
+  const d30 = lastDays(30);
+  const d90 = lastDays(90);
   return {
     event,
     version: PAYLOAD_VERSION,
@@ -28,7 +29,13 @@ function envelope(event: string, dest: Destination, agencyName: string, data: un
     source: "evx-fire",
     destination: { id: dest.id, name: dest.name },
     agency: { id: dest.agency_id, name: agencyName },
-    period: { since: days[0], until: days[days.length - 1], timezone: "America/Sao_Paulo" },
+    // since/until = período de metrics.daily; last_30d = período de metrics.last_30d
+    period: {
+      since: range?.since ?? d90[0],
+      until: range?.until ?? d90[d90.length - 1],
+      timezone: "America/Sao_Paulo",
+      last_30d: { since: d30[0], until: d30[d30.length - 1] },
+    },
     data,
   };
 }
@@ -111,18 +118,38 @@ export async function sendPing(db: SupabaseClient, dest: Destination, agencyName
 }
 
 /** Envia o retrato atual (uma chamada por conta de anúncio) para um destino. */
-export async function sendSnapshot(db: SupabaseClient, dest: Destination, tree?: AgencyTree) {
+/**
+ * Envia o retrato atual (uma chamada por conta de anúncio) para um destino.
+ * Para não sobrecarregar o CRM, pula a conta cujo pacote não mudou desde o último envio com sucesso
+ * (mesmo assim reenvia pelo menos 1x por dia). `force` (Enviar agora) envia tudo.
+ */
+export async function sendSnapshot(db: SupabaseClient, dest: Destination, tree?: AgencyTree, opts: { force?: boolean } = {}) {
   const data = tree ?? (await loadAgencyTree(db, dest.agency_id));
   const packs = buildAccountPayloads(data, dest.filters);
+  const { data: states } = await db.from("destination_state").select("ad_account_id, hash, sent_at").eq("destination_id", dest.id);
+  const stateBy = new Map((states ?? []).map((s) => [s.ad_account_id as string, s]));
   const results = [];
+  let skipped = 0;
   for (const p of packs) {
-    const r = await post(db, dest, "fire.snapshot", envelope("fire.snapshot", dest, data.agencyName, p), { ad_account: p.ad_account.external_id, items: p.counts.campaigns });
+    const hash = createHash("sha256").update(JSON.stringify(p)).digest("hex");
+    const prev = stateBy.get(p.ad_account.id);
+    const fresh = prev && Date.now() - Date.parse(prev.sent_at) < 24 * 3.6e6;
+    if (!opts.force && prev?.hash === hash && fresh) {
+      skipped++;
+      continue;
+    }
+    const r = await post(db, dest, "fire.snapshot", envelope("fire.snapshot", dest, data.agencyName, p, data.range), { ad_account: p.ad_account.external_id, items: p.counts.campaigns });
     results.push(r);
+    if (r.ok) {
+      await db
+        .from("destination_state")
+        .upsert({ destination_id: dest.id, ad_account_id: p.ad_account.id, agency_id: dest.agency_id, hash, sent_at: new Date().toISOString() }, { onConflict: "destination_id,ad_account_id" });
+    }
     if (r.status === 404) break; // integração não existe mais no CRM: não adianta continuar
   }
   if (results.length) await finish(db, dest, results);
   await stopIfGone(db, dest, results);
-  return { sent: results.length, failed: results.filter((r) => !r.ok).length };
+  return { sent: results.length, failed: results.filter((r) => !r.ok).length, skipped };
 }
 
 /** Depois de cada sincronização: envia para todos os destinos ativos da agência. */

@@ -34,6 +34,13 @@ function hue(id: string) {
   return 10 + (h % 30);
 }
 
+/** Busca por lotes de campanhas (só as das contas ativas), em paralelo. */
+async function byChunks<T>(ids: string[], run: (chunk: string[]) => Promise<T[]>) {
+  const parts: string[][] = [];
+  for (let i = 0; i < ids.length; i += 150) parts.push(ids.slice(i, i + 150));
+  return (await Promise.all(parts.map(run))).flat();
+}
+
 export interface AgencyData {
   campaigns: Campaign[];
   clients: Client[];
@@ -84,22 +91,22 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
   const campIds = camps.map((c) => c.id);
 
   const dailyRows = campIds.length
-    ? await fetchAll<{ campaign_id: string; date: string; spend: number; impressions: number; clicks: number; conversions: number; revenue: number }>((a, b) =>
-        db.from("campaign_daily").select("campaign_id, date, spend, impressions, clicks, conversions, revenue").eq("agency_id", agencyId).gte("date", since).range(a, b),
-      )
+    ? await byChunks(campIds, (ids) => fetchAll<{ campaign_id: string; date: string; spend: number; impressions: number; clicks: number; conversions: number; revenue: number }>((a, b) =>
+        db.from("campaign_daily").select("campaign_id, date, spend, impressions, clicks, conversions, revenue").in("campaign_id", ids).gte("date", since).range(a, b),
+      ))
     : [];
   const setRows = campIds.length
-    ? await fetchAll<{ id: string; campaign_id: string; name: string; effective_status: string }>((a, b) =>
-        db.from("ad_sets").select("id, campaign_id, name, effective_status").eq("agency_id", agencyId).range(a, b),
-      )
+    ? await byChunks(campIds, (ids) => fetchAll<{ id: string; campaign_id: string; name: string; effective_status: string }>((a, b) =>
+        db.from("ad_sets").select("id, campaign_id, name, effective_status").in("campaign_id", ids).range(a, b),
+      ))
     : [];
   const setsBy = new Map<string, { id: string; name: string; active: boolean }[]>();
   for (const s of setRows) (setsBy.get(s.campaign_id) ?? setsBy.set(s.campaign_id, []).get(s.campaign_id)!).push({ id: s.id, name: s.name, active: s.effective_status === "ACTIVE" });
 
   const creativeRows = campIds.length
-    ? await fetchAll<{ id: string; ad_set_id: string | null; campaign_id: string; name: string; format: Creative["format"]; headline: string; body: string; image_url: string | null; video_url: string | null; cta: string | null; media: Creative["media"]; active: boolean; impressions: number; clicks: number; spend: number; conversions: number }>((a, b) =>
-        db.from("creatives").select("id, ad_set_id, campaign_id, name, format, headline, body, image_url, video_url, cta, media, active, impressions, clicks, spend, conversions").eq("agency_id", agencyId).range(a, b),
-      )
+    ? await byChunks(campIds, (ids) => fetchAll<{ id: string; ad_set_id: string | null; campaign_id: string; name: string; format: Creative["format"]; headline: string; body: string; image_url: string | null; video_url: string | null; cta: string | null; media: Creative["media"]; active: boolean; impressions: number; clicks: number; spend: number; conversions: number }>((a, b) =>
+        db.from("creatives").select("id, ad_set_id, campaign_id, name, format, headline, body, image_url, video_url, cta, media, active, impressions, clicks, spend, conversions").in("campaign_id", ids).range(a, b),
+      ))
     : [];
 
   const dailyBy = new Map<string, Map<string, (typeof dailyRows)[number]>>();
@@ -134,7 +141,8 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
   const campaigns: Campaign[] = camps
     .map((c) => {
       const byDate = dailyBy.get(c.id);
-      const daily: DailyPoint[] = days.map((date) => {
+      // Campanha sem nenhum dado em 90 dias vai sem a lista de dias (deixa a página bem mais leve)
+      const daily: DailyPoint[] = (byDate ? days : []).map((date) => {
         const r = byDate?.get(date);
         return {
           date,

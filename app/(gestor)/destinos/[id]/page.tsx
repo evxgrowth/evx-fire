@@ -16,7 +16,7 @@ export default async function DestinoPage({ params }: { params: Promise<{ id: st
   if (!dest) notFound();
 
   const [{ tree }, { data: deliveries }] = await Promise.all([
-    loadAgencyTree(db, me.agencyId),
+    loadAgencyTree(db, me.agencyId, { withDaily: false }), // a prévia só precisa dos nomes
     db.from("deliveries").select("id, event, ad_account, items, status, ok, duration_ms, error, created_at").eq("destination_id", id).order("created_at", { ascending: false }).limit(25),
   ]);
 

@@ -111,9 +111,12 @@ export function sumDaily(points: DailyPoint[]) {
   );
 }
 
+/** Quantos dias o período tem (campanhas sem dados vêm com a lista vazia). */
+const spanOf = (list: Campaign[]) => list.reduce((m, c) => Math.max(m, c.daily.length), 0);
+
 export function totalsOf(list: Campaign[]): Totals {
   const base = sumDaily(list.flatMap((c) => c.daily));
-  const days = list[0]?.daily.length ?? 30;
+  const days = spanOf(list) || 30;
   // O alcance de 30 dias vem pronto da Meta; para outros períodos é uma estimativa proporcional
   const reach = list.reduce((a, c) => a + c.reach * Math.min(1, days / 30), 0);
   return {
@@ -134,6 +137,9 @@ export function campaignTotals(c: Campaign) {
 /** Série diária somada, separada por plataforma. */
 export function dailySeries(list: Campaign[]) {
   const map = new Map<string, { date: string; meta: number; google: number; revenue: number; conversions: number; clicks: number; impressions: number }>();
+  // Eixo completo de datas (a partir da campanha com a maior série), para os gráficos não terem buracos
+  const axis = list.reduce<Campaign | null>((best, c) => (!best || c.daily.length > best.daily.length ? c : best), null);
+  for (const p of axis?.daily ?? []) map.set(p.date, { date: p.date, meta: 0, google: 0, revenue: 0, conversions: 0, clicks: 0, impressions: 0 });
   for (const c of list) {
     for (const p of c.daily) {
       const row = map.get(p.date) ?? { date: p.date, meta: 0, google: 0, revenue: 0, conversions: 0, clicks: 0, impressions: 0 };
@@ -150,7 +156,7 @@ export function dailySeries(list: Campaign[]) {
 
 /** Compara o período atual com o período imediatamente anterior (para as setas de variação). */
 export function previousTotals(all: Campaign[], f: Filters) {
-  const available = all[0]?.daily.length ?? 0;
+  const available = spanOf(all);
   if (available < f.period * 2) return null;
   const full = filterCampaigns(all, { ...f, period: available as Period });
   const prev = full.map((c) => ({ ...c, daily: c.daily.slice(-f.period * 2, -f.period) }));
