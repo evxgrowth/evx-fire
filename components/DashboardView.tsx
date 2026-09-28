@@ -6,6 +6,7 @@ import { FileDown } from "lucide-react";
 import { dailySeries, filterCampaigns, previousTotals, topCreatives, totalsOf, type Filters } from "@/lib/data";
 import { useData } from "./DataProvider";
 import { useFilters } from "./useFilters";
+import { periodLabel } from "@/lib/period";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
 import KpiCard, { type KpiProps } from "./KpiCard";
 import FilterBar from "./FilterBar";
@@ -33,7 +34,7 @@ export default function DashboardView({
   hideCreatives?: boolean;
 }) {
   const { campaigns: all } = useData();
-  const [saved, setFilters] = useFilters();
+  const [saved, setFilters] = useFilters("dashboard");
   // No link do cliente, o cliente vem fixo
   const filters: Filters = fixedClientId ? { ...saved, clients: [fixedClientId] } : saved;
 
@@ -124,7 +125,7 @@ export default function DashboardView({
         <Panel
           className="xl:col-span-2"
           title="Investimento diário"
-          subtitle={`Últimos ${filters.period} dias, por plataforma`}
+          subtitle={`${periodLabel(filters.period)}, por plataforma`}
           action={<Legend items={legend} />}
           delay={0.2}
         >

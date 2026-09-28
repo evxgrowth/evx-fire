@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Sora } from "next/font/google";
 import FireBackground from "@/components/FireBackground";
+import { DialogProvider } from "@/components/kit/Dialogs";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -16,7 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR" className={`${inter.variable} ${sora.variable}`}>
       <body className="font-sans antialiased">
         <FireBackground />
-        <div className="relative z-10 overflow-x-clip">{children}</div>
+        <DialogProvider>
+          <div className="relative z-10 overflow-x-clip">{children}</div>
+        </DialogProvider>
       </body>
     </html>
   );

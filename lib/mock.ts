@@ -2,6 +2,7 @@
 // integração real. Depois, lib/data.ts passa a buscar da Meta e do Google
 // e este arquivo deixa de ser usado.
 
+import { todaySP } from "./period";
 import type { Campaign, Client, Creative, DailyPoint, Manager, Platform, CampaignStatus } from "./types";
 
 function rng(seed: number) {
@@ -15,7 +16,8 @@ function rng(seed: number) {
 }
 
 const DAYS = 90;
-const END = Date.UTC(2026, 8, 27);
+// A demonstração termina sempre "hoje" (fuso de São Paulo)
+const END = Date.parse(todaySP() + "T12:00:00Z");
 
 function isoDay(offset: number) {
   return new Date(END - offset * 86400000).toISOString().slice(0, 10);

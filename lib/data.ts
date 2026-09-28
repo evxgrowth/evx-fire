@@ -2,8 +2,9 @@
 // (reais, vindas do banco, ou de demonstração) e devolvem totais e séries.
 
 import type { Campaign, CampaignStatus, DailyPoint, Platform, Source, Totals } from "./types";
+import { DEFAULT_PERIOD, periodRange, previousRange, type PeriodKey, type Range } from "./period";
 
-export type Period = 7 | 14 | 30 | 90;
+export type Period = PeriodKey;
 export type TermScope = "any" | "campaign" | "adset" | "ad";
 
 /** Filtros do painel. Todos se somam (E): cada um estreita o resultado. */
@@ -24,7 +25,7 @@ export interface Filters {
   scope: TermScope;
 }
 
-export const defaultFilters: Filters = { period: 30, platform: "all", clients: [], statuses: [], sources: [], include: [], exclude: [], scope: "any" };
+export const defaultFilters: Filters = { period: DEFAULT_PERIOD, platform: "all", clients: [], statuses: [], sources: [], include: [], exclude: [], scope: "any" };
 
 /** Quantos filtros "avançados" estão ligados (para o contador do botão). */
 export function activeFilterCount(f: Filters) {
@@ -42,11 +43,12 @@ function hits(text: string, terms: string[]) {
   return terms.some((x) => x.trim() && t.includes(norm(x.trim())));
 }
 
-type Partialish = Partial<Filters> & { clientId?: string };
+type Partialish = Partial<Filters> & { clientId?: string; range?: Range };
 
 /** Aplica os filtros e corta o período. Com termos em conjunto/anúncio, mostra só os criativos que batem. */
 export function filterCampaigns(all: Campaign[], raw: Partialish = {}) {
   const f = { ...defaultFilters, ...raw };
+  const range = raw.range ?? periodRange(f.period);
   const inc = f.include.filter((t) => t.trim());
   const exc = f.exclude.filter((t) => t.trim());
   const out: Campaign[] = [];
@@ -93,7 +95,7 @@ export function filterCampaigns(all: Campaign[], raw: Partialish = {}) {
       if (f.scope === "ad" || f.scope === "any") creatives = creatives.filter((cr) => !hits(adText(cr), exc));
     }
 
-    out.push({ ...c, creatives, daily: c.daily.slice(-f.period) });
+    out.push({ ...c, creatives, daily: c.daily.filter((d) => d.date >= range.since && d.date <= range.until) });
   }
   return out;
 }
@@ -114,9 +116,8 @@ export function sumDaily(points: DailyPoint[]) {
 /** Quantos dias o período tem (campanhas sem dados vêm com a lista vazia). */
 const spanOf = (list: Campaign[]) => list.reduce((m, c) => Math.max(m, c.daily.length), 0);
 
-export function totalsOf(list: Campaign[]): Totals {
+export function totalsOf(list: Campaign[], days = spanOf(list) || 30): Totals {
   const base = sumDaily(list.flatMap((c) => c.daily));
-  const days = spanOf(list) || 30;
   // O alcance de 30 dias vem pronto da Meta; para outros períodos é uma estimativa proporcional
   const reach = list.reduce((a, c) => a + c.reach * Math.min(1, days / 30), 0);
   return {
@@ -156,12 +157,12 @@ export function dailySeries(list: Campaign[]) {
 
 /** Compara o período atual com o período imediatamente anterior (para as setas de variação). */
 export function previousTotals(all: Campaign[], f: Filters) {
-  const available = spanOf(all);
-  if (available < f.period * 2) return null;
-  const full = filterCampaigns(all, { ...f, period: available as Period });
-  const prev = full.map((c) => ({ ...c, daily: c.daily.slice(-f.period * 2, -f.period) }));
-  if (!prev.length) return null;
-  return totalsOf(prev);
+  const prev = previousRange(periodRange(f.period));
+  // Só compara se o período anterior inteiro estiver dentro do histórico carregado (90 dias)
+  const axis = all.reduce<Campaign | null>((best, c) => (!best || c.daily.length > best.daily.length ? c : best), null);
+  if (!axis?.daily.length || prev.since < axis.daily[0].date) return null;
+  const list = filterCampaigns(all, { ...f, range: prev });
+  return totalsOf(list, prev.days);
 }
 
 export function topCreatives(list: Campaign[], n = 6) {

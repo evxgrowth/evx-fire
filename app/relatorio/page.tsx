@@ -2,6 +2,7 @@ import ReportView from "@/components/report/ReportView";
 import { requireManager } from "@/lib/auth";
 import { defaultFilters, type Filters } from "@/lib/data";
 import { decodeFilters } from "@/lib/reportFilters";
+import { normalizePeriod } from "@/lib/period";
 import { loadAgencyData } from "@/lib/repo";
 import { createClient } from "@/lib/supabase/server";
 
@@ -14,8 +15,8 @@ export default async function RelatorioPage({ searchParams }: { searchParams: Pr
   const db = await createClient();
   const { f } = await searchParams;
   const [data, { data: prefRow }] = await Promise.all([loadAgencyData(db, me.agencyId), db.from("user_preferences").select("prefs").eq("user_id", me.id).maybeSingle()]);
-  const saved = (prefRow?.prefs as Record<string, Filters> | undefined)?.["filters.v2"];
-  const filters = decodeFilters(f) ?? { ...defaultFilters, ...(saved ?? {}) };
+  const prefs = (prefRow?.prefs ?? {}) as Record<string, unknown>;
+  const filters = decodeFilters(f) ?? { ...defaultFilters, ...((prefs["filters.dashboard"] as Partial<Filters>) ?? {}), period: normalizePeriod(prefs["filters.period"]) };
 
   return <ReportView campaigns={data.campaigns} clients={data.clients} filters={filters} agencyName={me.agencyName} backHref="/dashboard" />;
 }

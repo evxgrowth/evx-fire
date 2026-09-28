@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, Copy, ExternalLink, Eye, Link2, Loader2, Plus, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { Panel } from "@/components/ui";
+import { useDialog } from "@/components/kit/Dialogs";
+import Select from "@/components/kit/Select";
 import { createShareLink, deleteShareLink, updateShareLink } from "../actions";
 
 export interface LinkRow {
@@ -32,6 +34,7 @@ function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: () =
 
 export default function CompartilharClient({ links, clients }: { links: LinkRow[]; clients: { id: string; name: string }[] }) {
   const [pending, start] = useTransition();
+  const { confirm } = useDialog();
   const [copied, setCopied] = useState<string | null>(null);
   const [clientId, setClientId] = useState(clients[0]?.id ?? "");
   const [showRevenue, setShowRevenue] = useState(true);
@@ -51,13 +54,7 @@ export default function CompartilharClient({ links, clients }: { links: LinkRow[
               start(() => createShareLink(clientId, showRevenue, showCreatives));
             }}
           >
-            <select className="input" value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <Select value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.id, label: c.name }))} />
             <div className="space-y-2.5">
               <Toggle on={showRevenue} onChange={() => setShowRevenue((v) => !v)} label="Mostrar receita e ROAS" />
               <Toggle on={showCreatives} onChange={() => setShowCreatives((v) => !v)} label="Mostrar criativos" />
@@ -122,7 +119,10 @@ export default function CompartilharClient({ links, clients }: { links: LinkRow[
                   <Toggle on={l.show_creatives} disabled={pending} onChange={() => start(() => updateShareLink(l.id, { show_creatives: !l.show_creatives }))} label="Criativos" />
                   <button
                     className="ml-auto inline-flex items-center gap-1.5 text-xs text-ash-500 hover:text-bad"
-                    onClick={() => confirm("Excluir este link? Quem tiver o endereço perde o acesso.") && start(() => deleteShareLink(l.id))}
+                    onClick={async () => {
+                      const ok = await confirm({ title: `Excluir o link "${l.label}"?`, message: "Quem tiver este endereço perde o acesso ao painel na hora. Não dá para desfazer.", danger: true });
+                      if (ok) start(() => deleteShareLink(l.id));
+                    }}
                   >
                     <Trash2 size={13} /> Excluir
                   </button>

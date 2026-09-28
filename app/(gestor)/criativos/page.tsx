@@ -20,7 +20,7 @@ const norm = (s: string) =>
 
 export default function CriativosPage() {
   const { campaigns } = useData();
-  const [filters, setFilters] = useFilters();
+  const [filters, setFilters] = useFilters("creatives");
   const [prefs, setPrefs] = usePref("creatives.view", { state: "all" as "all" | "active" | "inactive" });
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
@@ -42,20 +42,38 @@ export default function CriativosPage() {
       <PageHeader title="Criativos" subtitle="Imagens, vídeos e anúncios, ordenados por resultado." />
       <div className="mb-5 flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <FilterBar filters={filters} onChange={setFilters} />
-        </div>
-        <div className="inline-flex rounded-xl border border-white/5 bg-black/30 p-1 text-xs">
-          {(
-            [
-              ["all", "Todos"],
-              ["active", "Rodando"],
-              ["inactive", "Parados"],
-            ] as const
-          ).map(([v, l]) => (
-            <button key={v} onClick={() => setPrefs({ ...prefs, state: v })} className={clsx("rounded-lg px-3 py-1.5 font-medium", prefs.state === v ? "bg-fire-500/15 text-white" : "text-ash-400 hover:text-white")}>
-              {l}
-            </button>
-          ))}
+          <FilterBar
+            filters={filters}
+            onChange={setFilters}
+            extraCount={prefs.state !== "all" ? 1 : 0}
+            onClearExtra={() => setPrefs({ ...prefs, state: "all" })}
+            extra={
+              <div>
+                <div className="mb-2 text-xs font-medium text-ash-300">Criativo</div>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["all", "Todos"],
+                      ["active", "Rodando"],
+                      ["inactive", "Parados"],
+                    ] as const
+                  ).map(([v, l]) => (
+                    <button
+                      key={v}
+                      onClick={() => setPrefs({ ...prefs, state: v })}
+                      className={clsx(
+                        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-all",
+                        prefs.state === v ? "border-fire-500/50 bg-fire-500/15 text-white shadow-[0_0_14px_-4px_rgba(255,92,0,.8)]" : "border-white/10 text-ash-300 hover:border-white/20",
+                      )}
+                    >
+                      {v !== "all" && <span className={`led ${v === "active" ? "led-active" : "led-paused"}`} />}
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            }
+          />
         </div>
         <div className="relative ml-auto w-full sm:w-72">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ash-400" />

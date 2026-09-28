@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { ArrowLeft, Printer } from "lucide-react";
 import { campaignTotals, dailySeries, filterCampaigns, topCreatives, totalsOf, type Filters } from "@/lib/data";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
+import { periodLabel, periodRange } from "@/lib/period";
 import type { Campaign, Client } from "@/lib/types";
 import { Legend, PlatformDonut, RevenueChart, SERIES, SpendChart } from "../charts";
 import { CreativeThumb } from "../CreativeCard";
@@ -94,8 +95,7 @@ export default function ReportView({
   // Sem receita no período (ex.: campanhas de leads): receita e ROAS não aparecem
   const hideRevenue = hideRevenueProp || d.t.revenue <= 0;
   const days = d.series;
-  const from = days[0]?.date;
-  const to = days.at(-1)?.date;
+  const range = periodRange(filters.period);
   const clientNames = filters.clients.map((id) => clients.find((c) => c.id === id)?.name).filter(Boolean) as string[];
   const title = defaultTitle ?? (clientNames.length ? clientNames.join(" · ") : agencyName || "Todas as contas");
   const generated = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
@@ -149,7 +149,7 @@ export default function ReportView({
             {title}
           </h1>
           <p className="mt-1 text-xs text-ash-300">
-            {from && to ? `Período: ${fmtDate(from)} a ${fmtDate(to)} (${filters.period} dias)` : "Sem dados no período"}
+            {`Período: ${periodLabel(filters.period)} · ${fmtDate(range.since)} a ${fmtDate(range.until)}`}
             {agencyName ? ` · Gestão: ${agencyName}` : ""}
           </p>
           {filterNotes.length > 0 && (

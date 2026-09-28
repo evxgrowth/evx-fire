@@ -24,6 +24,8 @@ import {
   Zap,
 } from "lucide-react";
 import { Panel, Pill } from "@/components/ui";
+import { useDialog } from "@/components/kit/Dialogs";
+import Select from "@/components/kit/Select";
 import { statusLabels } from "@/components/StatusLed";
 import { applyFilters, countTree, type DestFilters, type NodeAccount } from "@/lib/fire/filters";
 import type { CampaignStatus } from "@/lib/types";
@@ -152,6 +154,7 @@ const LED = ({ active }: { active: boolean }) => <span className={`led ${active 
 export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestProps; tree: Tree; deliveries: DeliveryRow[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { confirm } = useDialog();
   const [name, setName] = useState(dest.name);
   const [url, setUrl] = useState(dest.url);
   const [active, setActive] = useState(dest.active);
@@ -231,7 +234,15 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
                 type="button"
                 title="Gerar novo segredo"
                 className="grid h-8 w-8 place-items-center rounded-lg text-ash-400 hover:text-fire-300"
-                onClick={() => confirm("Gerar um novo segredo? O CRM precisará ser atualizado com o novo valor.") && start(async () => setSecret(await regenerateSecret(dest.id)))}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: "Gerar um novo segredo?",
+                    message: "O segredo atual deixa de valer na hora. Os envios ao CRM falham até você colar o novo segredo na tela de credenciais do CRM.",
+                    confirmLabel: "Gerar novo segredo",
+                    danger: true,
+                  });
+                  if (ok) start(async () => setSecret(await regenerateSecret(dest.id)));
+                }}
               >
                 <RefreshCw size={14} />
               </button>
@@ -255,7 +266,17 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
                 <button
                   type="button"
                   className="btn-ghost !px-3 !py-1.5 !text-xs"
-                  onClick={() => (!dest.apiKeyPrefix || confirm("Gerar nova chave? A chave antiga para de funcionar.")) && start(async () => setNewKey(await regenerateApiKey(dest.id)))}
+                  onClick={async () => {
+                    const ok =
+                      !dest.apiKeyPrefix ||
+                      (await confirm({
+                        title: "Gerar uma nova chave de API?",
+                        message: "A chave atual para de funcionar na hora. O botão \"Sincronizar agora\" do CRM falha até você colar a nova chave lá.",
+                        confirmLabel: "Gerar nova chave",
+                        danger: true,
+                      }));
+                    if (ok) start(async () => setNewKey(await regenerateApiKey(dest.id)));
+                  }}
                 >
                   {dest.apiKeyPrefix ? "Gerar nova" : "Gerar chave"}
                 </button>
@@ -379,14 +400,18 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
                   </div>
                   <TermsInput value={f.includeTerms} onChange={(v) => set("includeTerms", v)} placeholder="@XYZ, Black Friday, 1202…" />
                 </div>
-                <label className="block">
+                <div>
                   <span className="mb-2 block text-xs font-medium text-ash-300">Procurar no nome do(a)</span>
-                  <select className="input" value={f.termScope} onChange={(e) => set("termScope", e.target.value as DestFilters["termScope"])}>
-                    <option value="campaign">Campanha</option>
-                    <option value="adset">Conjunto de anúncios</option>
-                    <option value="ad">Anúncio</option>
-                  </select>
-                </label>
+                  <Select
+                    value={f.termScope}
+                    onChange={(x) => set("termScope", x)}
+                    options={[
+                      { value: "campaign", label: "Campanha" },
+                      { value: "adset", label: "Conjunto de anúncios" },
+                      { value: "ad", label: "Anúncio" },
+                    ]}
+                  />
+                </div>
               </div>
               <div>
                 <div className="mb-2 text-xs font-medium text-ash-300">
@@ -553,7 +578,15 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
           <Send size={16} /> Enviar agora
         </button>
         {dirty && <span className="text-xs text-warn">Alterações não salvas</span>}
-        <button className="ml-auto inline-flex items-center gap-1.5 text-xs text-ash-500 hover:text-bad" onClick={() => confirm("Excluir este destino?") && start(() => deleteDestination(dest.id))}>
+        <button className="ml-auto inline-flex items-center gap-1.5 text-xs text-ash-500 hover:text-bad" onClick={async () => {
+            const ok = await confirm({
+              title: `Excluir o destino "${dest.name}"?`,
+              message: "A EVX Fire para de enviar dados para este sistema, e o segredo e a chave de API deixam de valer. Os dados que o CRM já recebeu continuam lá.",
+              confirmLabel: "Excluir destino",
+              danger: true,
+            });
+            if (ok) start(() => deleteDestination(dest.id));
+          }}>
           <Trash2 size={14} /> Excluir destino
         </button>
       </div>

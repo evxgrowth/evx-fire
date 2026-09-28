@@ -7,6 +7,8 @@ import { AlertTriangle, Check, CheckCircle2, ChevronRight, Copy, Info, Loader2, 
 import clsx from "clsx";
 import { GoogleAdsIcon, MetaIcon } from "@/components/PlatformIcon";
 import { Panel, Pill } from "@/components/ui";
+import { useDialog } from "@/components/kit/Dialogs";
+import Select from "@/components/kit/Select";
 import { useBatchedToggle } from "@/components/useBatchedToggle";
 import { assignAccount, createClientRecord, setAccountsEnabled } from "../actions";
 import { createDestination } from "../destinos/actions";
@@ -81,6 +83,7 @@ export default function IntegracoesClient({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { prompt } = useDialog();
   const accToggle = useBatchedToggle(setAccountsEnabled);
   const [assigned, setAssigned] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
@@ -215,37 +218,35 @@ export default function IntegracoesClient({
                       </div>
                     </td>
                     <td className="py-3">
-                      <select
-                        className="input !w-auto !py-1.5 !text-xs"
-                        value={assigned[a.id] ?? a.client_id ?? ""}
-                        disabled={pending}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "__new") {
-                            const name = prompt("Nome do novo cliente:", a.name);
-                            if (!name) return;
-                            start(async () => {
-                              const id = await createClientRecord(name);
-                              await assignAccount(a.id, id);
-                              router.refresh();
-                            });
-                            return;
-                          }
-                          // Muda na tela na hora; grava em segundo plano
-                          setAssigned((m) => ({ ...m, [a.id]: v }));
-                          assignAccount(a.id, v || null)
-                            .then(() => router.refresh())
-                            .catch(() => setAssigned((m) => ({ ...m, [a.id]: a.client_id ?? "" })));
-                        }}
-                      >
-                        <option value="">— sem cliente —</option>
-                        {clients.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                        <option value="__new">+ Novo cliente…</option>
-                      </select>
+                      <div className="w-60">
+                        <Select
+                          size="sm"
+                          value={assigned[a.id] ?? a.client_id ?? ""}
+                          disabled={pending}
+                          options={[
+                            { value: "", label: "— sem cliente —" },
+                            ...clients.map((c) => ({ value: c.id, label: c.name })),
+                            { value: "__new", label: "+ Novo cliente…", action: true },
+                          ]}
+                          onChange={async (v) => {
+                            if (v === "__new") {
+                              const name = await prompt({ title: "Novo cliente", message: `A conta "${a.name}" será vinculada a ele.`, label: "Nome do cliente", defaultValue: a.name, confirmLabel: "Criar e vincular" });
+                              if (!name) return;
+                              start(async () => {
+                                const id = await createClientRecord(name);
+                                await assignAccount(a.id, id);
+                                router.refresh();
+                              });
+                              return;
+                            }
+                            // Muda na tela na hora; grava em segundo plano
+                            setAssigned((m) => ({ ...m, [a.id]: v }));
+                            assignAccount(a.id, v || null)
+                              .then(() => router.refresh())
+                              .catch(() => setAssigned((m) => ({ ...m, [a.id]: a.client_id ?? "" })));
+                          }}
+                        />
+                      </div>
                     </td>
                     <td className="py-3">
                       <Toggle on={accToggle.valueOf(a.id, a.sync_enabled)} onChange={() => accToggle.toggle(a.id, !accToggle.valueOf(a.id, a.sync_enabled))} />

@@ -6,6 +6,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import { ImagePlus, Loader2, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import ChipsInput from "@/components/ChipsInput";
+import Checkbox from "@/components/kit/Checkbox";
+import DateInput from "@/components/kit/DateInput";
+import { useDialog } from "@/components/kit/Dialogs";
+import Select from "@/components/kit/Select";
 import CampaignForm from "@/components/manual/CampaignForm";
 import { Panel } from "@/components/ui";
 import { createBrowser } from "@/lib/supabase/browser";
@@ -91,6 +95,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 // ---------- Resultados ----------
 function EntriesTab({ campaignId, entries, resultLabel }: { campaignId: string; entries: EntryRow[]; resultLabel: string }) {
   const [pending, start] = useTransition();
+  const { confirm } = useDialog();
   const [err, setErr] = useState<string | null>(null);
   const empty: EntryInput = { period: "day", date: new Date().toISOString().slice(0, 10), spend: 0, impressions: 0, reach: 0, clicks: 0, results: 0, revenue: 0, notes: "" };
   const [v, setV] = useState<EntryInput>(empty);
@@ -129,10 +134,10 @@ function EntriesTab({ campaignId, entries, resultLabel }: { campaignId: string; 
               ))}
             </div>
           </div>
-          <label className="block">
+          <div className="min-w-[220px]">
             <Label>{v.period === "day" ? "Data" : v.period === "week" ? "Início da semana" : "Mês"}</Label>
-            <input className="input" type={v.period === "month" ? "month" : "date"} value={v.date} onChange={(e) => setV((x) => ({ ...x, date: e.target.value }))} required />
-          </label>
+            <DateInput mode={v.period === "month" ? "month" : "date"} value={v.date} onChange={(date) => setV((x) => ({ ...x, date }))} />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <label className="block">
@@ -202,7 +207,14 @@ function EntriesTab({ campaignId, entries, resultLabel }: { campaignId: string; 
                   <td className="py-2 text-right text-ash-200">{fmtNum(Number(e.reach))}</td>
                   <td className="py-2 text-right text-ash-200">{fmtNum(Number(e.clicks))}</td>
                   <td className="py-2 text-right">
-                    <button className="text-ash-500 hover:text-bad" aria-label="Excluir lançamento" onClick={() => confirm("Excluir este lançamento?") && start(() => deleteEntry(campaignId, e.id))}>
+                    <button className="text-ash-500 hover:text-bad" aria-label="Excluir lançamento" onClick={async () => {
+                        const ok = await confirm({
+                          title: "Excluir este lançamento?",
+                          message: `${PERIOD_LABEL[e.period]} de ${fmtD(e.start_date)}: ${fmtMoney(Number(e.spend))} investidos. Os gráficos serão recalculados.`,
+                          danger: true,
+                        });
+                        if (ok) start(() => deleteEntry(campaignId, e.id));
+                      }}>
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -240,17 +252,15 @@ function AdSetForm({ campaignId, initial, onClose }: { campaignId: string; initi
           <Label>Nome do conjunto</Label>
           <input className="input" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder="Ex.: Mulheres 25-45 | Natal 5km" required />
         </label>
-        <label className="block">
+        <div>
           <Label>Meta de otimização</Label>
-          <select className="input" value={v.optimizationGoal} onChange={(e) => set("optimizationGoal", e.target.value)}>
-            <option value="">—</option>
-            {Object.entries(GOAL_LABELS).map(([k, l]) => (
-              <option key={k} value={k}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select
+            value={v.optimizationGoal}
+            onChange={(x) => set("optimizationGoal", x)}
+            placeholder="Escolha a meta…"
+            options={[{ value: "", label: "— sem meta —" }, ...Object.entries(GOAL_LABELS).map(([k, l]) => ({ value: k, label: l }))]}
+          />
+        </div>
         <label className="block">
           <Label>Orçamento diário do conjunto (R$)</Label>
           <input className="input" type="number" min={0} step="0.01" value={v.dailyBudget || ""} onChange={(e) => set("dailyBudget", Number(e.target.value))} />
@@ -323,7 +333,7 @@ function AdSetForm({ campaignId, initial, onClose }: { campaignId: string; initi
           <textarea className="input min-h-[80px]" value={v.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Ex.: público frio, remarketing de 30 dias, teste A/B de oferta…" />
         </label>
         <label className="inline-flex items-center gap-2 text-sm text-ash-200">
-          <input type="checkbox" checked={v.active} onChange={(e) => set("active", e.target.checked)} className="accent-fire-500" /> Conjunto ativo
+          <Checkbox checked={v.active} onChange={(x) => set("active", x)} label="Conjunto ativo" />
         </label>
       </div>
       {err && <p className="rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-xs text-bad">{err}</p>}
@@ -336,6 +346,7 @@ function AdSetForm({ campaignId, initial, onClose }: { campaignId: string; initi
 
 // ---------- Criativos (anúncios) ----------
 function AdForm({ campaignId, agencyId, adsets, initial, onClose }: { campaignId: string; agencyId: string; adsets: { id: string; name: string }[]; initial: AdInput; onClose: () => void }) {
+  const { confirm } = useDialog();
   const [v, setV] = useState<AdInput>(initial);
   const [pending, start] = useTransition();
   const [uploading, setUploading] = useState(0);
@@ -404,7 +415,10 @@ function AdForm({ campaignId, agencyId, adsets, initial, onClose }: { campaignId
                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] text-white">{i + 1}</span>
                 <button
                   type="button"
-                  onClick={() => set("media", v.media.filter((_, j) => j !== i))}
+                  onClick={async () => {
+                    const ok = await confirm({ title: "Remover este arquivo do anúncio?", message: "Ele sai do anúncio quando você salvar.", confirmLabel: "Remover", danger: true });
+                    if (ok) set("media", v.media.filter((_, j) => j !== i));
+                  }}
                   className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
                   aria-label="Remover arquivo"
                 >
@@ -426,17 +440,10 @@ function AdForm({ campaignId, agencyId, adsets, initial, onClose }: { campaignId
           <Label>Nome do anúncio</Label>
           <input className="input" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder="Ex.: VID_01 | Depoimento" required />
         </label>
-        <label className="block">
+        <div>
           <Label>Conjunto de anúncios</Label>
-          <select className="input" value={v.adSetId} onChange={(e) => set("adSetId", e.target.value)}>
-            <option value="">— sem conjunto —</option>
-            {adsets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={v.adSetId} onChange={(x) => set("adSetId", x)} options={[{ value: "", label: "— sem conjunto —" }, ...adsets.map((s) => ({ value: s.id, label: s.name }))]} />
+        </div>
         <label className="block md:col-span-2">
           <Label>Título</Label>
           <input className="input" value={v.headline} onChange={(e) => set("headline", e.target.value)} placeholder="Ex.: Sua primeira aula é por nossa conta" />
@@ -445,22 +452,16 @@ function AdForm({ campaignId, agencyId, adsets, initial, onClose }: { campaignId
           <Label>Legenda (texto principal)</Label>
           <textarea className="input min-h-[110px]" value={v.body} onChange={(e) => set("body", e.target.value)} />
         </label>
-        <label className="block">
+        <div>
           <Label>Botão (CTA)</Label>
-          <select className="input" value={v.cta} onChange={(e) => set("cta", e.target.value)}>
-            {CTAS.map(([k, l]) => (
-              <option key={k} value={k}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={v.cta} onChange={(x) => set("cta", x)} options={CTAS.map(([k, l]) => ({ value: k, label: l }))} />
+        </div>
         <label className="block">
           <Label>Link de destino</Label>
           <input className="input" value={v.link} onChange={(e) => set("link", e.target.value)} placeholder="https://… ou link do WhatsApp" />
         </label>
         <label className="inline-flex items-center gap-2 text-sm text-ash-200">
-          <input type="checkbox" checked={v.active} onChange={(e) => set("active", e.target.checked)} className="accent-fire-500" /> Anúncio ativo
+          <Checkbox checked={v.active} onChange={(x) => set("active", x)} label="Anúncio ativo" />
         </label>
       </div>
       {err && <p className="rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-xs text-bad">{err}</p>}
@@ -488,6 +489,7 @@ export default function ManualPanel({
   ads: (AdInput & { id: string })[];
 }) {
   const router = useRouter();
+  const { confirm } = useDialog();
   const [tab, setTab] = useState<"results" | "audiences" | "ads" | "data">("results");
   const [setModal, setSetModal] = useState<AdSetInput | null>(null);
   const [adModal, setAdModal] = useState<AdInput | null>(null);
@@ -526,7 +528,10 @@ export default function ManualPanel({
                   <button className="grid h-7 w-7 place-items-center rounded-lg text-ash-500 hover:text-fire-300" onClick={() => setSetModal(s)} aria-label="Editar conjunto">
                     <Pencil size={13} />
                   </button>
-                  <button className="grid h-7 w-7 place-items-center rounded-lg text-ash-500 hover:text-bad" onClick={() => confirm("Excluir este conjunto?") && start(() => deleteAdSet(campaign.id, s.id))} aria-label="Excluir conjunto">
+                  <button className="grid h-7 w-7 place-items-center rounded-lg text-ash-500 hover:text-bad" onClick={async () => {
+                      const ok = await confirm({ title: `Excluir o conjunto "${s.name}"?`, message: "Os anúncios dele continuam, mas ficam sem conjunto.", danger: true });
+                      if (ok) start(() => deleteAdSet(campaign.id, s.id));
+                    }} aria-label="Excluir conjunto">
                     <Trash2 size={13} />
                   </button>
                 </div>
@@ -571,7 +576,14 @@ export default function ManualPanel({
                       <button className="btn-ghost !px-2 !py-1 !text-[11px]" onClick={() => setAdModal(a)}>
                         <Pencil size={12} /> Editar
                       </button>
-                      <button className="btn-ghost !px-2 !py-1 !text-[11px] hover:!text-bad" onClick={() => confirm("Excluir este anúncio e seus arquivos?") && start(() => deleteAd(campaign.id, a.id))}>
+                      <button className="btn-ghost !px-2 !py-1 !text-[11px] hover:!text-bad" onClick={async () => {
+                        const ok = await confirm({
+                          title: `Excluir o anúncio "${a.name}"?`,
+                          message: "As imagens e vídeos enviados para ele também serão apagados. Não dá para desfazer.",
+                          danger: true,
+                        });
+                        if (ok) start(() => deleteAd(campaign.id, a.id));
+                      }}>
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -602,13 +614,19 @@ export default function ManualPanel({
             <button
               className="inline-flex items-center gap-2 text-xs text-ash-500 hover:text-bad"
               disabled={pending}
-              onClick={() =>
-                confirm("Excluir esta campanha manual com todos os lançamentos, públicos e criativos?") &&
-                start(async () => {
-                  await deleteManualCampaign(campaign.id);
-                  router.push("/campanhas");
-                })
-              }
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Excluir a campanha "${campaign.name}"?`,
+                  message: "Todos os lançamentos, públicos e criativos dela serão apagados, e ela some dos painéis e do CRM. Não dá para desfazer.",
+                  confirmLabel: "Excluir campanha",
+                  danger: true,
+                });
+                if (ok)
+                  start(async () => {
+                    await deleteManualCampaign(campaign.id);
+                    router.push("/campanhas");
+                  });
+              }}
             >
               <Trash2 size={14} /> Excluir campanha
             </button>

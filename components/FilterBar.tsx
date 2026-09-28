@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { SlidersHorizontal, X } from "lucide-react";
-import { activeFilterCount, defaultFilters, type Filters, type Period, type TermScope } from "@/lib/data";
+import { Filter, X } from "lucide-react";
+import { activeFilterCount, defaultFilters, type Filters, type TermScope } from "@/lib/data";
+import PeriodSelect from "./PeriodSelect";
 import type { CampaignStatus } from "@/lib/types";
 import { useData } from "./DataProvider";
 import ChipsInput from "./ChipsInput";
@@ -62,16 +63,34 @@ const STATUSES: CampaignStatus[] = ["active", "learning", "paused", "ended"];
  * Barra de filtros do painel, campanhas e criativos.
  * `lockClient`: no link do cliente, o cliente já vem fixo (sem seletor de clientes).
  */
-export default function FilterBar({ filters, onChange, lockClient = false }: { filters: Filters; onChange: (f: Filters) => void; lockClient?: boolean }) {
+export default function FilterBar({
+  filters,
+  onChange,
+  lockClient = false,
+  extra,
+  extraCount = 0,
+  onClearExtra,
+}: {
+  filters: Filters;
+  onChange: (f: Filters) => void;
+  lockClient?: boolean;
+  /** filtros próprios da página, mostrados dentro do painel (ex.: criativos rodando/parados) */
+  extra?: React.ReactNode;
+  extraCount?: number;
+  onClearExtra?: () => void;
+}) {
   const { clients } = useData();
   const [open, setOpen] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const f = filters;
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => onChange({ ...f, [k]: v });
-  const count = activeFilterCount(f) - (lockClient && f.clients.length ? 1 : 0);
+  const count = activeFilterCount(f) - (lockClient && f.clients.length ? 1 : 0) + extraCount;
   const activeClients = clients.filter((c) => c.active);
   const nameOf = (id: string) => clients.find((c) => c.id === id)?.name ?? "cliente";
-  const clear = () => onChange({ ...defaultFilters, period: f.period, clients: lockClient ? f.clients : [] });
+  const clear = () => {
+    onChange({ ...defaultFilters, period: f.period, clients: lockClient ? f.clients : [] });
+    onClearExtra?.();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -129,17 +148,7 @@ export default function FilterBar({ filters, onChange, lockClient = false }: { f
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3">
-        <Segmented<Period>
-          layoutId="seg-period"
-          value={f.period}
-          onChange={(period) => set("period", period)}
-          options={[
-            { value: 7, label: "7 dias" },
-            { value: 14, label: "14 dias" },
-            { value: 30, label: "30 dias" },
-            { value: 90, label: "90 dias" },
-          ]}
-        />
+        <PeriodSelect value={f.period} onChange={(period) => set("period", period)} />
         <Segmented<Filters["platform"]>
           layoutId="seg-platform"
           value={f.platform}
@@ -168,13 +177,15 @@ export default function FilterBar({ filters, onChange, lockClient = false }: { f
           <button
             onClick={() => setOpen((o) => !o)}
             className={clsx(
-              "inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all",
+              "relative grid h-[34px] w-[34px] place-items-center rounded-xl border transition-all",
               open || count ? "border-fire-500/50 bg-fire-500/15 text-white shadow-[0_0_16px_-6px_rgba(255,92,0,.9)]" : "border-white/10 bg-black/30 text-ash-300 hover:text-white",
             )}
             aria-expanded={open}
+            aria-label="Filtros"
+            title="Filtros"
           >
-            <SlidersHorizontal size={14} /> Filtros
-            {count > 0 && <span className="grid h-4 min-w-4 place-items-center rounded-full bg-fire-500 px-1 text-[10px] font-bold text-coal-950">{count}</span>}
+            <Filter size={15} />
+            {count > 0 && <span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-fire-500 px-1 text-[10px] font-bold text-coal-950">{count}</span>}
           </button>
 
           <AnimatePresence>
@@ -186,6 +197,7 @@ export default function FilterBar({ filters, onChange, lockClient = false }: { f
                 transition={{ duration: 0.15 }}
                 className="absolute left-0 top-full z-40 mt-2 w-[min(560px,calc(100vw-2rem))] space-y-5 rounded-2xl border border-fire-500/25 bg-coal-900/95 p-5 shadow-[0_24px_60px_-20px_rgba(0,0,0,.9),0_0_40px_-20px_rgba(255,92,0,.6)] backdrop-blur-xl"
               >
+                {extra}
                 {!lockClient && activeClients.length > 0 && (
                   <div>
                     <div className="mb-2 text-xs font-medium text-ash-300">Clientes</div>
@@ -257,7 +269,7 @@ export default function FilterBar({ filters, onChange, lockClient = false }: { f
         </div>
       </div>
 
-      {tags.length > 0 && (
+      {(tags.length > 0 || extraCount > 0) && (
         <div className="flex flex-wrap items-center gap-2">
           {tags.map((t) => (
             <span key={t.key} className="inline-flex items-center gap-1.5 rounded-full border border-fire-500/30 bg-fire-500/10 py-1 pl-3 pr-1.5 text-xs text-fire-200">

@@ -20,7 +20,7 @@ const norm = (s: string) =>
 
 export default function CampanhasPage() {
   const { campaigns, demo } = useData();
-  const [filters, setFilters] = useFilters();
+  const [filters, setFilters] = useFilters("campaigns");
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const q = useDebounced(search, 300);

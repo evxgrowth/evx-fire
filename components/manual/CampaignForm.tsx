@@ -5,6 +5,8 @@ import { Loader2, Save } from "lucide-react";
 import clsx from "clsx";
 import type { CampaignInput } from "@/app/(gestor)/campanhas/manual-actions";
 import { GoogleAdsIcon, MetaIcon } from "../PlatformIcon";
+import DateInput from "../kit/DateInput";
+import Select from "../kit/Select";
 
 export const OBJECTIVES = ["Vendas", "Leads", "Mensagens", "Tráfego", "Engajamento", "Reconhecimento", "Alcance", "Visualizações de vídeo", "App", "Outro"];
 export const RESULT_LABELS = ["Leads", "Vendas", "Conversas iniciadas", "Cliques no link", "Cadastros", "Agendamentos", "Ligações", "Visitas ao perfil", "Seguidores", "Visualizações de vídeo"];
@@ -33,6 +35,7 @@ export default function CampaignForm({
       onSubmit={(e) => {
         e.preventDefault();
         setErr(null);
+        if (!v.clientId) return setErr("Escolha o cliente.");
         start(async () => {
           const r = await onSubmit(v);
           if (r && !r.ok) setErr(r.error ?? "Erro ao salvar");
@@ -44,17 +47,10 @@ export default function CampaignForm({
           <Label>Nome da campanha</Label>
           <input className="input" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder="Ex.: @XYZ | Leads | Setembro" required />
         </label>
-        <label className="block">
+        <div>
           <Label>Cliente</Label>
-          <select className="input" value={v.clientId} onChange={(e) => set("clientId", e.target.value)} required>
-            <option value="">Escolha…</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={v.clientId} onChange={(x) => set("clientId", x)} placeholder="Escolha o cliente…" options={clients.map((c) => ({ value: c.id, label: c.name }))} />
+        </div>
         <div>
           <Label>Onde a campanha roda</Label>
           <div className="flex gap-2">
@@ -73,22 +69,28 @@ export default function CampaignForm({
             ))}
           </div>
         </div>
-        <label className="block">
+        <div>
           <Label>Objetivo</Label>
-          <select className="input" value={v.objective} onChange={(e) => set("objective", e.target.value)}>
-            {OBJECTIVES.map((o) => (
-              <option key={o}>{o}</option>
-            ))}
-          </select>
-        </label>
+          <Select value={v.objective} onChange={(x) => set("objective", x)} options={OBJECTIVES.map((o) => ({ value: o, label: o }))} />
+        </div>
         <label className="block">
           <Label>Como chamar o resultado</Label>
-          <input className="input" list="result-labels" value={v.resultLabel} onChange={(e) => set("resultLabel", e.target.value)} placeholder="Ex.: Leads" />
-          <datalist id="result-labels">
+          <input className="input" value={v.resultLabel} onChange={(e) => set("resultLabel", e.target.value)} placeholder="Ex.: Leads" />
+          <div className="mt-2 flex flex-wrap gap-1.5">
             {RESULT_LABELS.map((r) => (
-              <option key={r} value={r} />
+              <button
+                type="button"
+                key={r}
+                onClick={() => set("resultLabel", r)}
+                className={clsx(
+                  "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                  v.resultLabel === r ? "border-fire-500/50 bg-fire-500/15 text-white" : "border-white/10 text-ash-400 hover:text-white",
+                )}
+              >
+                {r}
+              </button>
             ))}
-          </datalist>
+          </div>
         </label>
         <div>
           <Label>Status</Label>
@@ -125,14 +127,14 @@ export default function CampaignForm({
           </label>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <label className="block">
+          <div>
             <Label>Início</Label>
-            <input className="input" type="date" value={v.startDate} onChange={(e) => set("startDate", e.target.value)} />
-          </label>
-          <label className="block">
+            <DateInput value={v.startDate} onChange={(x) => set("startDate", x)} />
+          </div>
+          <div>
             <Label>Término (opcional)</Label>
-            <input className="input" type="date" value={v.endDate} onChange={(e) => set("endDate", e.target.value)} />
-          </label>
+            <DateInput value={v.endDate} onChange={(x) => set("endDate", x)} placeholder="Sem término" clearable />
+          </div>
         </div>
         <label className="block md:col-span-2">
           <Label>Observações / estratégia</Label>
