@@ -27,14 +27,43 @@ export async function graphGet<T>(path: string, params: Record<string, string>) 
   return call<T>(graphUrl(path, params));
 }
 
-/** Busca todas as páginas de um endpoint de lista. */
-export async function graphList<T>(path: string, params: Record<string, string>, maxPages = 25): Promise<T[]> {
+const TOO_MUCH = /reduce the amount of data/i;
+const TRANSIENT = new Set([1, 2, 4, 17, 341]); // erros temporários / limite de chamadas da Meta
+
+/**
+ * Busca todas as páginas de um endpoint de lista.
+ * Se a Meta pedir "menos dados", diminui o lote pela metade e tenta de novo;
+ * em erro temporário, espera um pouco e repete.
+ */
+export async function graphList<T>(path: string, params: Record<string, string>, maxPages = 60): Promise<T[]> {
   const out: T[] = [];
-  let url: string | undefined = graphUrl(path, { limit: "200", ...params });
-  for (let i = 0; url && i < maxPages; i++) {
-    const page: { data: T[]; paging?: { next?: string } } = await call(url);
-    out.push(...page.data);
-    url = page.paging?.next;
+  let limit = Number(params.limit ?? 200);
+  let url: string | undefined = graphUrl(path, { ...params, limit: String(limit) });
+  let retries = 0;
+  for (let i = 0; url && i < maxPages; ) {
+    const current: string = url;
+    try {
+      const page: { data: T[]; paging?: { next?: string } } = await call(current);
+      out.push(...page.data);
+      url = page.paging?.next;
+      i++;
+      retries = 0;
+    } catch (e) {
+      const err = e as MetaError;
+      if (TOO_MUCH.test(err.message) && limit > 5) {
+        limit = Math.max(5, Math.floor(limit / 2));
+        const u = new URL(current);
+        u.searchParams.set("limit", String(limit));
+        url = u.toString();
+        continue;
+      }
+      if ((TRANSIENT.has(err.code ?? -1) || /unknown error/i.test(err.message)) && retries < 3) {
+        retries++;
+        await new Promise((r) => setTimeout(r, 1500 * retries));
+        continue;
+      }
+      throw e;
+    }
   }
   return out;
 }

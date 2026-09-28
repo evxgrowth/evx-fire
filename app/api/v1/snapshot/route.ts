@@ -13,6 +13,14 @@ export const maxDuration = 60;
  * Cabeçalho: Authorization: Bearer <chave de API do destino>
  */
 export async function GET(req: NextRequest) {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return NextResponse.json({ error: "internal_error", message: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
+}
+
+async function handle(req: NextRequest) {
   const key = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   if (!key) return NextResponse.json({ error: "missing_api_key" }, { status: 401 });
 

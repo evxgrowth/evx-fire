@@ -79,15 +79,15 @@ export function resultSpec(goal?: string, promoted?: { custom_event_type?: strin
   return { types: [...PURCHASE, ...LEAD], label: "Conversões", type: "conversions" };
 }
 
-export function computeResult(m: Metrics | undefined, goal?: string, promoted?: { custom_event_type?: string } | null): Result | null {
-  if (!m) return null;
+export function computeResult(m: Partial<Metrics> | undefined, goal?: string, promoted?: { custom_event_type?: string } | null): Result | null {
+  if (!m || m.spend === undefined) return null;
   const spec = resultSpec(goal, promoted);
   const value = spec.metric ? Number(m[spec.metric]) || 0 : sumTypes(m.actions, spec.types!);
-  return { type: spec.type, label: spec.label, value, cost_per_result: value > 0 ? +(m.spend / value).toFixed(2) : null };
+  return { type: spec.type, label: spec.label, value, cost_per_result: value > 0 ? +(Number(m.spend) / value).toFixed(2) : null };
 }
 
 /** Receita (valor de compras) quando houver. */
-export function revenueOf(m: Metrics | undefined) {
+export function revenueOf(m: Partial<Metrics> | undefined) {
   return sumTypes(m?.action_values, PURCHASE);
 }
 

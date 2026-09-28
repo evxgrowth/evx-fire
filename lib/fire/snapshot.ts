@@ -30,9 +30,9 @@ export function audienceOf(t: Row | null | undefined, notes?: string) {
   const locations: string[] = [
     ...(geo.countries ?? []),
     ...(geo.regions ?? []).map((r: Row) => r.name),
-    ...(geo.cities ?? []).map((c: Row) => (c.radius ? `${c.name} (+${c.radius} ${c.distance_unit === "mile" ? "mi" : "km"})` : c.name)),
+    ...(geo.cities ?? []).map((c: Row) => (c.radius ? `até ${c.radius} ${c.distance_unit === "mile" ? "milhas" : "km"} de ${c.name}` : c.name)),
     ...(geo.zips ?? []).map((z: Row) => z.name ?? z.key),
-    ...(geo.custom_locations ?? []).map((c: Row) => c.name ?? `${c.latitude},${c.longitude} (+${c.radius}${c.distance_unit === "mile" ? "mi" : "km"})`),
+    ...(geo.custom_locations ?? []).map((c: Row) => `até ${c.radius} ${c.distance_unit === "mile" ? "milhas" : "km"} de ${c.name ?? c.address_string ?? `${c.latitude}, ${c.longitude}`}`),
   ].filter(Boolean);
   const interests: string[] = [];
   for (const spec of t.flexible_spec ?? []) {
@@ -46,10 +46,12 @@ export function audienceOf(t: Row | null | undefined, notes?: string) {
   const advantage = t.targeting_automation?.advantage_audience === 1;
   const placements = [...(t.publisher_platforms ?? []), ...(t.instagram_positions ?? []).map((p: string) => `instagram_${p}`), ...(t.facebook_positions ?? []).map((p: string) => `facebook_${p}`)];
 
+  const COUNTRY: Record<string, string> = { BR: "Brasil", PT: "Portugal", US: "Estados Unidos" };
+  const places = locations.map((l) => COUNTRY[l] ?? l);
+  const who = genders.length === 1 ? genders[0] : "Homens e mulheres";
+  const age = `${t.age_min ?? 18} a ${t.age_max ?? 65}${(t.age_max ?? 65) >= 65 ? " anos ou mais" : " anos"}`;
   const parts = [
-    `${t.age_min ?? 18}–${t.age_max ?? 65}${(t.age_max ?? 65) >= 65 ? "+" : ""} anos`,
-    genders.length ? genders.join(" e ") : "Todos os gêneros",
-    locations.length ? locations.slice(0, 6).join(", ") + (locations.length > 6 ? ` e mais ${locations.length - 6}` : "") : null,
+    `${who}, ${age}${places.length ? ", " + (places.slice(0, 5).join(", ") + (places.length > 5 ? ` e mais ${places.length - 5} locais` : "")) : ""}`,
     interests.length ? `Interesses: ${interests.slice(0, 6).join(", ")}${interests.length > 6 ? "…" : ""}` : null,
     custom.length ? `Públicos: ${custom.join(", ")}` : null,
     excluded.length ? `Excluídos: ${excluded.join(", ")}` : null,
@@ -58,7 +60,7 @@ export function audienceOf(t: Row | null | undefined, notes?: string) {
   ].filter(Boolean);
 
   return {
-    summary: parts.join(" · "),
+    summary: parts.join(". ") + ".",
     age_min: t.age_min ?? null,
     age_max: t.age_max ?? null,
     genders,
@@ -74,8 +76,17 @@ export function audienceOf(t: Row | null | undefined, notes?: string) {
 }
 
 // ---------- Métricas ----------
-function metricsBlock(m: Metrics | undefined | null) {
-  const x = m ?? ({ spend: 0, impressions: 0, reach: 0, clicks: 0 } as Metrics);
+function metricsBlock(m: Partial<Metrics> | undefined | null) {
+  // Campanhas sem veiculação no período chegam com métricas vazias
+  const x: Metrics = {
+    spend: Number(m?.spend ?? 0),
+    impressions: Number(m?.impressions ?? 0),
+    reach: Number(m?.reach ?? 0),
+    clicks: Number(m?.clicks ?? 0),
+    frequency: Number(m?.frequency ?? 0),
+    actions: m?.actions ?? [],
+    action_values: m?.action_values ?? [],
+  };
   const revenue = revenueOf(x);
   return {
     spend: +x.spend.toFixed(2),
@@ -177,7 +188,8 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
 
 // ---------- Pacote enviado ao CRM ----------
 export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilters>) {
-  const today = lastDays()[29];
+  const allDays = lastDays();
+  const today = allDays[allDays.length - 1];
   const f = normalizeFilters(filters);
   const keptBy = new Map(applyFilters(data.tree, f).map((a) => [a.id, a]));
   // Toda conta dentro do escopo gera um pacote, mesmo vazio: assim o CRM sabe o que remover.
@@ -280,7 +292,11 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
           today: todayRow
             ? { spend: Number(todayRow.spend), impressions: Number(todayRow.impressions), reach: Number(todayRow.reach), clicks: Number(todayRow.clicks), conversions: Number(todayRow.conversions), revenue: Number(todayRow.revenue) }
             : { spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, revenue: 0 },
-          daily: days.map((d) => ({ date: d.date, spend: Number(d.spend), impressions: Number(d.impressions), reach: Number(d.reach), clicks: Number(d.clicks), conversions: Number(d.conversions), revenue: Number(d.revenue) })),
+          // Todos os dias do período, com zero onde não houve veiculação
+          daily: allDays.map((date) => {
+            const d = days.find((x) => x.date === date);
+            return { date, spend: Number(d?.spend ?? 0), impressions: Number(d?.impressions ?? 0), reach: Number(d?.reach ?? 0), clicks: Number(d?.clicks ?? 0), conversions: Number(d?.conversions ?? 0), revenue: Number(d?.revenue ?? 0) };
+          }),
         },
         ad_sets: adsets,
       };
