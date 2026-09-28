@@ -27,6 +27,34 @@ export async function updateClientRecord(id: string, name: string, segment: stri
   refresh();
 }
 
+/** Vários clientes de uma vez (fila de cliques da tela). Sem recarregar tudo: a tela já mudou. */
+export async function setClientsActive(changes: [string, boolean][]) {
+  await requireManager();
+  const db = await createClient();
+  const on = changes.filter(([, v]) => v).map(([id]) => id);
+  const off = changes.filter(([, v]) => !v).map(([id]) => id);
+  if (on.length) {
+    const { error } = await db.from("clients").update({ active: true }).in("id", on);
+    if (error) throw new Error(error.message);
+  }
+  if (off.length) {
+    const { error } = await db.from("clients").update({ active: false }).in("id", off);
+    if (error) throw new Error(error.message);
+  }
+}
+
+/** Ativa/desativa várias contas de anúncio de uma vez. Conta desativada não sincroniza nem aparece. */
+export async function setAccountsEnabled(changes: [string, boolean][]) {
+  await requireManager();
+  const db = await createClient();
+  for (const value of [true, false]) {
+    const ids = changes.filter(([, v]) => v === value).map(([id]) => id);
+    if (!ids.length) continue;
+    const { error } = await db.from("ad_accounts").update({ sync_enabled: value }).in("id", ids);
+    if (error) throw new Error(error.message);
+  }
+}
+
 /** Desativar esconde o cliente e as campanhas dele dos painéis, links e destinos. */
 export async function setClientActive(id: string, active: boolean) {
   await requireManager();
@@ -45,8 +73,8 @@ export async function deleteClientRecord(id: string) {
 export async function assignAccount(accountId: string, clientId: string | null) {
   await requireManager();
   const db = await createClient();
-  await db.from("ad_accounts").update({ client_id: clientId }).eq("id", accountId);
-  refresh();
+  const { error } = await db.from("ad_accounts").update({ client_id: clientId }).eq("id", accountId);
+  if (error) throw new Error(error.message);
 }
 
 export async function setAccountSync(accountId: string, enabled: boolean) {

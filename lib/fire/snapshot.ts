@@ -130,7 +130,7 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
   const since = lastDays()[0];
   const [{ data: agency }, { data: accounts }, { data: clients }] = await Promise.all([
     db.from("agencies").select("name").eq("id", agencyId).single(),
-    db.from("ad_accounts").select("id, external_id, name, currency, client_id, platform").eq("agency_id", agencyId).order("name"),
+    db.from("ad_accounts").select("id, external_id, name, currency, client_id, platform, sync_enabled").eq("agency_id", agencyId).order("name"),
     db.from("clients").select("id, name, active").eq("agency_id", agencyId),
   ]);
   const [camps, sets, ads, daily] = await Promise.all([
@@ -146,7 +146,8 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string): Prom
 
   // Clientes desativados não são enviados a nenhum destino
   const inactive = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
-  const tree = (accounts ?? []).filter((acc) => !acc.client_id || !inactive.has(acc.client_id)).map((acc) => ({
+  // Contas desativadas e clientes inativos não são enviados
+  const tree = (accounts ?? []).filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactive.has(acc.client_id))).map((acc) => ({
     id: acc.id,
     external_id: acc.external_id,
     name: acc.name,

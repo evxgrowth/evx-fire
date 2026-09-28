@@ -2,9 +2,10 @@
 
 import { useMemo } from "react";
 import { Banknote, Eye, MousePointerClick, Percent, ShoppingCart, Target, TrendingUp, Users } from "lucide-react";
-import { dailySeries, defaultFilters, filterCampaigns, previousTotals, topCreatives, totalsOf, type Filters } from "@/lib/data";
+import { FileDown } from "lucide-react";
+import { dailySeries, filterCampaigns, previousTotals, topCreatives, totalsOf, type Filters } from "@/lib/data";
 import { useData } from "./DataProvider";
-import { usePref } from "./Prefs";
+import { useFilters } from "./useFilters";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
 import KpiCard, { type KpiProps } from "./KpiCard";
 import FilterBar from "./FilterBar";
@@ -22,18 +23,19 @@ export default function DashboardView({
   campaignLinkBase,
   hideRevenue = false,
   hideCreatives = false,
+  reportHref,
 }: {
+  /** endereço do relatório em PDF (os filtros atuais vão junto) */
+  reportHref?: string;
   fixedClientId?: string;
   campaignLinkBase?: string;
   hideRevenue?: boolean;
   hideCreatives?: boolean;
 }) {
-  const { campaigns: all, clients } = useData();
-  const [saved, setFilters] = usePref<Filters>("dashboard.filters", defaultFilters);
-  // Cliente fixo (link do cliente) ou um cliente salvo que não existe mais → volta para "todos"
-  const filters: Filters = fixedClientId
-    ? { ...saved, clientId: fixedClientId }
-    : { ...saved, clientId: saved.clientId === "all" || clients.some((c) => c.id === saved.clientId) ? saved.clientId : "all" };
+  const { campaigns: all } = useData();
+  const [saved, setFilters] = useFilters();
+  // No link do cliente, o cliente vem fixo
+  const filters: Filters = fixedClientId ? { ...saved, clients: [fixedClientId] } : saved;
 
   const data = useMemo(() => {
     const list = filterCampaigns(all, filters);
@@ -66,7 +68,7 @@ export default function DashboardView({
     { id: "roas", label: "ROAS", value: t.roas, format: fmtX, icon: Target, delta: delta("roas") },
     { id: "conv", label: "Vendas / Leads", value: t.conversions, format: fmtNum, icon: ShoppingCart, delta: delta("conversions"), spark: s.map((d) => d.conversions) },
     { id: "imp", label: "Impressões", value: t.impressions, format: fmtNumShort, icon: Eye, delta: delta("impressions") },
-    { id: "reach", label: "Alcance", value: t.reach, format: fmtNumShort, icon: Users, delta: delta("reach") },
+    { id: "reach", label: "Alcance", value: t.reach, format: fmtNumShort, icon: Users },
     { id: "clicks", label: "Cliques", value: t.clicks, format: fmtNum, icon: MousePointerClick, delta: delta("clicks"), spark: s.map((d) => d.clicks) },
     { id: "ctr", label: "CTR", value: t.ctr, format: (v) => fmtPct(v), icon: Percent, delta: delta("ctr") },
   ];
@@ -80,8 +82,10 @@ export default function DashboardView({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <FilterBar filters={filters} onChange={setFilters} showClient={!fixedClientId} />
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ash-400">
+        <div className="min-w-0 flex-1">
+          <FilterBar filters={filters} onChange={setFilters} lockClient={!!fixedClientId} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash-400">
           <span>
             <b className="text-white">{data.active}</b> campanhas rodando
           </span>
@@ -94,11 +98,20 @@ export default function DashboardView({
           <span>
             CPM <b className="text-white">{fmtMoney(t.cpm)}</b>
           </span>
+          {reportHref && (
+            <a
+              href={`${reportHref}?f=${encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(filters)))))}`}
+              target="_blank"
+              className="btn-fire !px-3 !py-2 !text-xs"
+            >
+              <FileDown size={14} /> Relatório PDF
+            </a>
+          )}
         </div>
       </div>
 
       {!data.list.length && (
-        <div className="glass p-8 text-center text-sm text-ash-400">Nenhuma campanha com veiculação neste período.</div>
+        <div className="glass p-8 text-center text-sm text-ash-400">Nenhuma campanha com esses filtros.</div>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

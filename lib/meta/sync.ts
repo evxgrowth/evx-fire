@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CampaignStatus, CreativeFormat } from "@/lib/types";
-import { graphGet, graphList } from "./graph";
+import { graphBatch, graphGet, graphList } from "./graph";
 import { computeResult, metricsFromInsight, type Action } from "./results";
 
 const DAYS = 30;
@@ -120,7 +120,7 @@ interface MetaAd {
     asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; link_urls?: { website_url?: string }[]; videos?: { video_id?: string; thumbnail_url?: string }[]; images?: { url?: string }[] };
     object_story_spec?: {
       link_data?: { name?: string; message?: string; picture?: string; link?: string; call_to_action?: { type?: string }; child_attachments?: unknown[] };
-      video_data?: { title?: string; message?: string; image_url?: string; video_id?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+      video_data?: { title?: string; message?: string; image_url?: string; image_hash?: string; video_id?: string; call_to_action?: { type?: string; value?: { link?: string } } };
     };
   };
 }
@@ -131,6 +131,8 @@ const METRIC_FIELDS = "spend,impressions,reach,clicks,frequency,actions,action_v
 export async function syncMetaAccount(db: SupabaseClient, account: { id: string; agency_id: string; external_id: string }, token: string) {
   const act = account.external_id; // "act_123"
   const range = JSON.stringify({ since: daysAgo(DAYS - 1), until: today() });
+  // Métricas dia a dia: 90 dias (para o filtro de período do painel)
+  const range90 = JSON.stringify({ since: daysAgo(89), until: today() });
   const now = new Date().toISOString();
 
   const [info, camps, daily, campTotals, adsets, adsetTotals, ads, adTotals] = await Promise.all([
@@ -143,7 +145,7 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
       access_token: token,
       level: "campaign",
       time_increment: "1",
-      time_range: range,
+      time_range: range90,
       fields: `campaign_id,${METRIC_FIELDS}`,
     }),
     graphList<Insight>(`${act}/insights`, { access_token: token, level: "campaign", time_range: range, fields: `campaign_id,${METRIC_FIELDS}` }),
@@ -248,21 +250,39 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
   }
   for (const s of adsets) setGoal.set(s.id, { goal: s.optimization_goal ?? "", promoted: s.promoted_object ?? null });
 
-  // ---------- Vídeos: tenta obter o link do arquivo e a capa ----------
-  const videoIds = [...new Set(ads.map((a) => a.creative?.video_id ?? a.creative?.object_story_spec?.video_data?.video_id ?? a.creative?.asset_feed_spec?.videos?.[0]?.video_id).filter(Boolean) as string[])];
-  const videos = new Map<string, { source?: string; picture?: string }>();
-  for (let i = 0; i < videoIds.length; i += 50) {
+  // ---------- Miniaturas grandes ----------
+  // Vídeos e alguns criativos vêm com uma capa "facebook.com/ads/image" que fora do Facebook
+  // aparece como um quadro azul. Pedimos a miniatura real em 640px, em lotes.
+  const badImage = (u?: string) => !u || u.includes("facebook.com/ads/image");
+  const needThumb = [
+    ...new Set(
+      ads
+        // quem tem capa enviada (image_hash) não precisa: usa a capa, que vem numa chamada só
+        .filter((a) => a.creative?.id && !a.creative.object_story_spec?.video_data?.image_hash)
+        .filter((a) => a.creative!.video_id || a.creative!.object_story_spec?.video_data || badImage(a.creative!.image_url ?? a.creative!.object_story_spec?.link_data?.picture))
+        .map((a) => a.creative!.id),
+    ),
+  ];
+  const thumbs = await graphBatch<{ thumbnail_url?: string }>(
+    token,
+    needThumb.map((id) => `${id}?fields=thumbnail_url&thumbnail_width=640&thumbnail_height=640`),
+  );
+  // Capa enviada junto com o vídeo (image_hash): é a imagem mais fiel e não expira como as miniaturas
+  const hashes = [...new Set(ads.map((a) => a.creative?.object_story_spec?.video_data?.image_hash).filter(Boolean) as string[])];
+  const coverByHash = new Map<string, string>();
+  for (let i = 0; i < hashes.length; i += 50) {
     try {
-      const res = await graphGet<Record<string, { source?: string; picture?: string }>>("", {
+      const imgs = await graphList<{ hash: string; url?: string }>(`${act}/adimages`, {
         access_token: token,
-        ids: videoIds.slice(i, i + 50).join(","),
-        fields: "source,picture",
+        hashes: JSON.stringify(hashes.slice(i, i + 50)),
+        fields: "hash,url",
       });
-      for (const [id, v] of Object.entries(res)) videos.set(id, v);
+      for (const im of imgs) if (im.url) coverByHash.set(im.hash, im.url);
     } catch {
-      // sem permissão para algum vídeo: seguimos só com a capa do criativo
+      // sem a capa: fica a miniatura
     }
   }
+  const bigThumb = (creativeId?: string) => (creativeId ? thumbs.get(`${creativeId}?fields=thumbnail_url&thumbnail_width=640&thumbnail_height=640`)?.thumbnail_url : undefined);
 
   // ---------- Anúncios / criativos ----------
   const creatives = ads
@@ -278,7 +298,9 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
       const m = adTot.get(a.id);
       const g = setGoal.get(a.adset_id);
       const result = computeResult(m, g?.goal, g?.promoted as { custom_event_type?: string } | null);
-      const video = videoId ? videos.get(videoId) : undefined;
+      const cover = story?.video_data?.image_hash ? coverByHash.get(story.video_data.image_hash) : undefined;
+      const big = cover ?? bigThumb(cr.id);
+      const firstImage = [cr.image_url, story?.link_data?.picture, feed?.images?.[0]?.url].find((u) => !badImage(u));
       return {
         agency_id: account.agency_id,
         campaign_id: campId.get(a.campaign_id)!,
@@ -289,10 +311,11 @@ export async function syncMetaAccount(db: SupabaseClient, account: { id: string;
         format,
         headline: cr.title ?? story?.link_data?.name ?? story?.video_data?.title ?? feed?.titles?.[0]?.text ?? "",
         body: cr.body ?? story?.link_data?.message ?? story?.video_data?.message ?? feed?.bodies?.[0]?.text ?? "",
-        image_url: cr.image_url ?? story?.link_data?.picture ?? story?.video_data?.image_url ?? feed?.images?.[0]?.url ?? video?.picture ?? cr.thumbnail_url ?? null,
-        thumbnail_url: cr.thumbnail_url ?? video?.picture ?? null,
+        image_url: (isVideo ? big : firstImage) ?? firstImage ?? big ?? cr.thumbnail_url ?? null,
+        thumbnail_url: big ?? cr.thumbnail_url ?? null,
         video_id: videoId ?? null,
-        video_url: video?.source ?? null,
+        // O arquivo do vídeo exige permissões de Página que o app não tem: vai a capa + link de prévia
+        video_url: null,
         cta: cr.call_to_action_type ?? story?.link_data?.call_to_action?.type ?? story?.video_data?.call_to_action?.type ?? null,
         link_url: story?.link_data?.link ?? story?.video_data?.call_to_action?.value?.link ?? feed?.link_urls?.[0]?.website_url ?? null,
         preview_url: a.preview_shareable_link ?? null,

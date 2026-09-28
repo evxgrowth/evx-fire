@@ -54,9 +54,9 @@ export function Legend({ items }: { items: { color: string; label: string }[] })
 }
 
 /** Investimento diário empilhado por plataforma. */
-export function SpendChart({ data, showMeta = true, showGoogle = true }: { data: Row[]; showMeta?: boolean; showGoogle?: boolean }) {
+export function SpendChart({ data, showMeta = true, showGoogle = true, still = false, height = 260 }: { data: Row[]; showMeta?: boolean; showGoogle?: boolean; still?: boolean; height?: number }) {
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="g-meta" x1="0" y1="0" x2="0" y2="1">
@@ -106,6 +106,7 @@ export function SpendChart({ data, showMeta = true, showGoogle = true }: { data:
             stroke={SERIES.google}
             strokeWidth={2}
             fill="url(#g-google)"
+            isAnimationActive={!still}
             animationDuration={1400}
             activeDot={{ r: 5, stroke: "#0c0907", strokeWidth: 2 }}
           />
@@ -118,7 +119,8 @@ export function SpendChart({ data, showMeta = true, showGoogle = true }: { data:
             stroke={SERIES.meta}
             strokeWidth={2}
             fill="url(#g-meta)"
-            filter="url(#glow)"
+            filter={still ? undefined : "url(#glow)"}
+            isAnimationActive={!still}
             animationDuration={1600}
             activeDot={{ r: 5, stroke: "#0c0907", strokeWidth: 2 }}
           />
@@ -129,9 +131,9 @@ export function SpendChart({ data, showMeta = true, showGoogle = true }: { data:
 }
 
 /** Receita diária (série única). */
-export function RevenueChart({ data }: { data: Row[] }) {
+export function RevenueChart({ data, still = false, height = 200 }: { data: Row[]; still?: boolean; height?: number }) {
   return (
-    <ResponsiveContainer width="100%" height={200}>
+    <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 10, right: 8, left: 0, bottom: 0 }} barCategoryGap={2}>
         <defs>
           <linearGradient id="g-rev" x1="0" y1="0" x2="0" y2="1">
@@ -157,14 +159,14 @@ export function RevenueChart({ data }: { data: Row[] }) {
             ) : null
           }
         />
-        <Bar dataKey="revenue" fill="url(#g-rev)" radius={[4, 4, 0, 0]} animationDuration={1400} />
+        <Bar dataKey="revenue" fill="url(#g-rev)" radius={[4, 4, 0, 0]} isAnimationActive={!still} animationDuration={1400} />
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
 /** Divisão do investimento entre plataformas. */
-export function PlatformDonut({ meta, google }: { meta: number; google: number }) {
+export function PlatformDonut({ meta, google, still = false }: { meta: number; google: number; still?: boolean }) {
   const total = meta + google || 1;
   const data = [
     { name: "Meta Ads", value: meta, color: SERIES.meta },
@@ -184,6 +186,7 @@ export function PlatformDonut({ meta, google }: { meta: number; google: number }
             stroke="#0c0907"
             strokeWidth={2}
             cornerRadius={6}
+            isAnimationActive={!still}
             animationDuration={1400}
           >
             {data.map((d) => (

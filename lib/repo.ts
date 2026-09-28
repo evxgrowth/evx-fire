@@ -45,10 +45,10 @@ export interface AgencyData {
  * `db` pode ser o cliente do usuário (segurança do banco aplicada) ou o administrativo.
  */
 export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyClientId?: string): Promise<AgencyData> {
-  const days = lastDays();
+  const days = lastDays(90);
   const since = days[0];
 
-  let accQ = db.from("ad_accounts").select("id, client_id, platform, external_id, name, last_synced_at").eq("agency_id", agencyId);
+  let accQ = db.from("ad_accounts").select("id, client_id, platform, external_id, name, last_synced_at, sync_enabled").eq("agency_id", agencyId);
   if (onlyClientId) accQ = accQ.eq("client_id", onlyClientId);
   const { data: accounts } = await accQ;
   const accById = new Map((accounts ?? []).map((a) => [a.id as string, a]));
@@ -72,7 +72,10 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
 
   // Contas de clientes desativados não aparecem em nenhuma tela
   const inactive = new Set((clientRows ?? []).filter((c) => !c.active).map((c) => c.id));
-  const accountIds = [...accById.values()].filter((a) => !a.client_id || !inactive.has(a.client_id)).map((a) => a.id as string);
+  // Contas desativadas (Integrações) e de clientes inativos não aparecem
+  const accountIds = [...accById.values()]
+    .filter((a) => (a.platform === "manual" || a.sync_enabled) && (!a.client_id || !inactive.has(a.client_id)))
+    .map((a) => a.id as string);
   if (!accountIds.length) return { campaigns: [], clients, lastSync: null };
 
   const camps = await fetchAll<{ id: string; ad_account_id: string; platform: "meta" | "google"; source: Campaign["source"]; name: string; objective: string; status: Campaign["status"]; daily_budget: number; reach_30d: number }>((a, b) =>
@@ -85,9 +88,17 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
         db.from("campaign_daily").select("campaign_id, date, spend, impressions, clicks, conversions, revenue").eq("agency_id", agencyId).gte("date", since).range(a, b),
       )
     : [];
+  const setRows = campIds.length
+    ? await fetchAll<{ id: string; campaign_id: string; name: string; effective_status: string }>((a, b) =>
+        db.from("ad_sets").select("id, campaign_id, name, effective_status").eq("agency_id", agencyId).range(a, b),
+      )
+    : [];
+  const setsBy = new Map<string, { id: string; name: string; active: boolean }[]>();
+  for (const s of setRows) (setsBy.get(s.campaign_id) ?? setsBy.set(s.campaign_id, []).get(s.campaign_id)!).push({ id: s.id, name: s.name, active: s.effective_status === "ACTIVE" });
+
   const creativeRows = campIds.length
-    ? await fetchAll<{ id: string; campaign_id: string; name: string; format: Creative["format"]; headline: string; body: string; image_url: string | null; video_url: string | null; cta: string | null; media: Creative["media"]; active: boolean; impressions: number; clicks: number; spend: number; conversions: number }>((a, b) =>
-        db.from("creatives").select("id, campaign_id, name, format, headline, body, image_url, video_url, cta, media, active, impressions, clicks, spend, conversions").eq("agency_id", agencyId).range(a, b),
+    ? await fetchAll<{ id: string; ad_set_id: string | null; campaign_id: string; name: string; format: Creative["format"]; headline: string; body: string; image_url: string | null; video_url: string | null; cta: string | null; media: Creative["media"]; active: boolean; impressions: number; clicks: number; spend: number; conversions: number }>((a, b) =>
+        db.from("creatives").select("id, ad_set_id, campaign_id, name, format, headline, body, image_url, video_url, cta, media, active, impressions, clicks, spend, conversions").eq("agency_id", agencyId).range(a, b),
       )
     : [];
 
@@ -109,6 +120,7 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
       imageUrl: c.image_url ?? c.media?.find((m) => m.type === "image")?.url ?? undefined,
       videoUrl: c.video_url ?? c.media?.find((m) => m.type === "video")?.url ?? undefined,
       media: c.media ?? [],
+      adSetId: c.ad_set_id ?? undefined,
       cta: c.cta ?? undefined,
       impressions: Number(c.impressions),
       clicks: Number(c.clicks),
@@ -145,6 +157,7 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
         reach: Number(c.reach_30d),
         daily,
         creatives: crBy.get(c.id) ?? [],
+        adsets: setsBy.get(c.id) ?? [],
       };
     });
 

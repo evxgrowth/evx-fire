@@ -8,7 +8,8 @@ import FilterBar from "@/components/FilterBar";
 import { PageHeader } from "@/components/ui";
 import { useData } from "@/components/DataProvider";
 import { useDebounced, usePref } from "@/components/Prefs";
-import { defaultFilters, filterCampaigns, topCreatives, type Filters } from "@/lib/data";
+import { filterCampaigns, topCreatives } from "@/lib/data";
+import { useFilters } from "@/components/useFilters";
 
 const PAGE = 40;
 const norm = (s: string) =>
@@ -18,12 +19,12 @@ const norm = (s: string) =>
     .toLowerCase();
 
 export default function CriativosPage() {
-  const { campaigns, clients } = useData();
-  const [prefs, setPrefs] = usePref("creatives.filters", { ...defaultFilters, state: "all" as "all" | "active" | "inactive" });
+  const { campaigns } = useData();
+  const [filters, setFilters] = useFilters();
+  const [prefs, setPrefs] = usePref("creatives.view", { state: "all" as "all" | "active" | "inactive" });
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const q = useDebounced(search, 300);
-  const filters: Filters = { period: prefs.period, platform: prefs.platform, clientId: clients.some((c) => c.id === prefs.clientId) ? prefs.clientId : "all" };
 
   const creatives = useMemo(() => {
     let list = topCreatives(filterCampaigns(campaigns, filters), 9999);
@@ -39,8 +40,10 @@ export default function CriativosPage() {
   return (
     <>
       <PageHeader title="Criativos" subtitle="Imagens, vídeos e anúncios, ordenados por resultado." />
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <FilterBar filters={filters} onChange={(f) => setPrefs({ ...prefs, ...f })} />
+      <div className="mb-5 flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <FilterBar filters={filters} onChange={setFilters} />
+        </div>
         <div className="inline-flex rounded-xl border border-white/5 bg-black/30 p-1 text-xs">
           {(
             [

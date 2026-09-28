@@ -15,7 +15,7 @@ export default async function DashboardPage() {
         }
         subtitle="Aqui está o desempenho de todas as suas contas de anúncio."
       />
-      <DashboardView campaignLinkBase="/campanhas" />
+      <DashboardView campaignLinkBase="/campanhas" reportHref="/relatorio" />
     </>
   );
 }

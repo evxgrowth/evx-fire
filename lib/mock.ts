@@ -14,7 +14,7 @@ function rng(seed: number) {
   };
 }
 
-const DAYS = 30;
+const DAYS = 90;
 const END = Date.UTC(2026, 8, 27);
 
 function isoDay(offset: number) {
@@ -122,7 +122,7 @@ function buildCampaign(s: Seed, i: number): Campaign {
     objective: s.objective,
     status: s.status,
     dailyBudget: s.budget,
-    reach: Math.round(reachAcc),
+    reach: Math.round(reachAcc / 3), // alcance de 30 dias
     daily,
     creatives,
   };

@@ -68,6 +68,32 @@ export async function graphList<T>(path: string, params: Record<string, string>,
   return out;
 }
 
+/**
+ * Várias consultas numa chamada só (API de lote da Meta, até 50 por vez).
+ * Devolve um mapa caminho → resposta; itens com erro ficam de fora.
+ */
+export async function graphBatch<T>(token: string, paths: string[]): Promise<Map<string, T>> {
+  const out = new Map<string, T>();
+  for (let i = 0; i < paths.length; i += 50) {
+    const chunk = paths.slice(i, i + 50);
+    try {
+      const res = await fetch("https://graph.facebook.com/", {
+        method: "POST",
+        body: new URLSearchParams({ access_token: token, batch: JSON.stringify(chunk.map((p) => ({ method: "GET", relative_url: p }))) }),
+        cache: "no-store",
+      });
+      const list = (await res.json()) as ({ code: number; body: string } | null)[];
+      if (!Array.isArray(list)) continue;
+      list.forEach((r, k) => {
+        if (r?.code === 200) out.set(chunk[k], JSON.parse(r.body) as T);
+      });
+    } catch {
+      // lote falhou: seguimos sem essas informações extras
+    }
+  }
+  return out;
+}
+
 // ---------- OAuth ----------
 
 export function redirectUri(origin: string) {

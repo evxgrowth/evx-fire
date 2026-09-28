@@ -12,7 +12,8 @@ import { PageHeader, Pill } from "@/components/ui";
 import { filterCampaigns, totalsOf } from "@/lib/data";
 import { fmtMoney, fmtNum, fmtX } from "@/lib/format";
 import type { Client } from "@/lib/types";
-import { createClientRecord, setClientActive, updateClientRecord } from "../actions";
+import { useBatchedToggle } from "@/components/useBatchedToggle";
+import { createClientRecord, setClientsActive, updateClientRecord } from "../actions";
 
 const norm = (s: string) =>
   s
@@ -65,12 +66,13 @@ export default function ClientesPage() {
   const [search, setSearch] = useState("");
   const q = useDebounced(search, 300);
   const [modal, setModal] = useState<Client | "new" | null>(null);
-  const [pending, start] = useTransition();
+  const { toggle, valueOf, saving } = useBatchedToggle(setClientsActive);
+  const isActive = (c: Client) => valueOf(c.id, c.active);
 
-  const inactiveCount = clients.filter((c) => !c.active).length;
+  const inactiveCount = clients.filter((c) => !isActive(c)).length;
   const rows = useMemo(() => {
     return clients
-      .filter((c) => c.active !== prefs.showInactive)
+      .filter((c) => isActive(c) !== prefs.showInactive)
       .map((c) => {
         const list = filterCampaigns(campaigns, { clientId: c.id });
         const connected = !!(c.metaAccountId || c.googleCustomerId);
@@ -79,7 +81,8 @@ export default function ClientesPage() {
       })
       .filter((r) => prefs.kind === "all" || (prefs.kind === "api" ? r.connected : r.manual > 0 || !r.connected))
       .filter((r) => !q.trim() || norm(r.c.name + " " + r.c.segment).includes(norm(q.trim())));
-  }, [clients, campaigns, prefs.kind, prefs.showInactive, q]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, campaigns, prefs.kind, prefs.showInactive, q, valueOf]);
 
   return (
     <>
@@ -144,7 +147,9 @@ export default function ClientesPage() {
         </p>
       )}
 
+      {saving && <p className="mb-3 text-[11px] text-ash-500">Salvando alterações…</p>}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <AnimatePresence mode="popLayout">
         {rows.map(({ c, list, manual }, i) => {
           const t = totalsOf(list);
           const running = list.filter((x) => x.status === "active" || x.status === "learning").length;
@@ -155,7 +160,8 @@ export default function ClientesPage() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: Math.min(i, 12) * 0.04 }}
-              className={clsx("glass glass-hover p-5", !c.active && "opacity-70")}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+              className={clsx("glass glass-hover p-5", !isActive(c) && "opacity-70")}
             >
               <div className="flex items-start gap-3">
                 <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-fire-400 to-fire-700 font-display text-lg font-bold text-white shadow-[0_0_24px_-6px_rgba(255,92,0,.8)]">
@@ -178,19 +184,18 @@ export default function ClientesPage() {
                       <Pencil size={13} />
                     </button>
                     <button
-                      className={clsx("grid h-7 w-7 place-items-center rounded-lg hover:bg-white/5", c.active ? "text-ash-500 hover:text-bad" : "text-ash-400 hover:text-good")}
-                      disabled={pending}
-                      onClick={() => start(() => setClientActive(c.id, !c.active))}
-                      aria-label={c.active ? "Desativar cliente" : "Reativar cliente"}
-                      title={c.active ? "Desativar cliente" : "Reativar cliente"}
+                      className={clsx("grid h-7 w-7 place-items-center rounded-lg hover:bg-white/5", isActive(c) ? "text-ash-500 hover:text-bad" : "text-ash-400 hover:text-good")}
+                      onClick={() => toggle(c.id, !isActive(c))}
+                      aria-label={isActive(c) ? "Desativar cliente" : "Reativar cliente"}
+                      title={isActive(c) ? "Desativar cliente" : "Reativar cliente"}
                     >
-                      {c.active ? <Power size={13} /> : <ArchiveRestore size={14} />}
+                      {isActive(c) ? <Power size={13} /> : <ArchiveRestore size={14} />}
                     </button>
                   </div>
                 )}
               </div>
 
-              {c.active && (
+              {isActive(c) && (
                 <>
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     <Pill tone={running ? "good" : "muted"}>
@@ -247,6 +252,7 @@ export default function ClientesPage() {
             </motion.div>
           );
         })}
+        </AnimatePresence>
       </div>
 
       <AnimatePresence>{modal && <ClientModal client={modal} onClose={() => setModal(null)} />}</AnimatePresence>

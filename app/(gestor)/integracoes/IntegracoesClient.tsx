@@ -7,7 +7,8 @@ import { AlertTriangle, Check, CheckCircle2, ChevronRight, Copy, Info, Loader2, 
 import clsx from "clsx";
 import { GoogleAdsIcon, MetaIcon } from "@/components/PlatformIcon";
 import { Panel, Pill } from "@/components/ui";
-import { assignAccount, createClientRecord, setAccountSync } from "../actions";
+import { useBatchedToggle } from "@/components/useBatchedToggle";
+import { assignAccount, createClientRecord, setAccountsEnabled } from "../actions";
 import { createDestination } from "../destinos/actions";
 
 export interface AccountRow {
@@ -80,6 +81,8 @@ export default function IntegracoesClient({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const accToggle = useBatchedToggle(setAccountsEnabled);
+  const [assigned, setAssigned] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
   const metaAccounts = accounts.filter((a) => a.platform === "meta");
   // (contas "manuais" não aparecem aqui: são criadas pelas campanhas manuais)
@@ -177,20 +180,24 @@ export default function IntegracoesClient({
       </div>
 
       {metaAccounts.length > 0 && (
-        <Panel title="Contas de anúncio" subtitle="Escolha de qual cliente é cada conta e quais devem ser sincronizadas.">
+        <Panel
+          title="Contas de anúncio"
+          subtitle="Escolha de qual cliente é cada conta. Conta desativada não é sincronizada, some dos painéis e não é enviada aos destinos."
+          action={accToggle.saving ? <span className="text-[11px] text-ash-500">Salvando…</span> : undefined}
+        >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm [&_td]:px-3 [&_th]:px-3">
               <thead>
                 <tr className="border-b border-white/5 text-left text-[11px] uppercase tracking-wider text-ash-400">
                   <th className="py-3 font-medium">Conta</th>
                   <th className="py-3 font-medium">Cliente</th>
-                  <th className="py-3 font-medium">Sincronizar</th>
+                  <th className="py-3 font-medium">Ativa</th>
                   <th className="py-3 font-medium">Última atualização</th>
                 </tr>
               </thead>
               <tbody>
                 {metaAccounts.map((a) => (
-                  <tr key={a.id} className="border-b border-white/[0.04]">
+                  <tr key={a.id} className={clsx("border-b border-white/[0.04] transition-opacity", !accToggle.valueOf(a.id, a.sync_enabled) && "opacity-50")}>
                     <td className="py-3">
                       <div className="flex items-center gap-2">
                         <span className="text-meta">
@@ -210,20 +217,25 @@ export default function IntegracoesClient({
                     <td className="py-3">
                       <select
                         className="input !w-auto !py-1.5 !text-xs"
-                        value={a.client_id ?? ""}
+                        value={assigned[a.id] ?? a.client_id ?? ""}
                         disabled={pending}
                         onChange={(e) => {
                           const v = e.target.value;
-                          start(async () => {
-                            if (v === "__new") {
-                              const name = prompt("Nome do novo cliente:", a.name);
-                              if (!name) return;
+                          if (v === "__new") {
+                            const name = prompt("Nome do novo cliente:", a.name);
+                            if (!name) return;
+                            start(async () => {
                               const id = await createClientRecord(name);
                               await assignAccount(a.id, id);
-                            } else {
-                              await assignAccount(a.id, v || null);
-                            }
-                          });
+                              router.refresh();
+                            });
+                            return;
+                          }
+                          // Muda na tela na hora; grava em segundo plano
+                          setAssigned((m) => ({ ...m, [a.id]: v }));
+                          assignAccount(a.id, v || null)
+                            .then(() => router.refresh())
+                            .catch(() => setAssigned((m) => ({ ...m, [a.id]: a.client_id ?? "" })));
                         }}
                       >
                         <option value="">— sem cliente —</option>
@@ -236,7 +248,7 @@ export default function IntegracoesClient({
                       </select>
                     </td>
                     <td className="py-3">
-                      <Toggle on={a.sync_enabled} disabled={pending} onChange={() => start(() => setAccountSync(a.id, !a.sync_enabled))} />
+                      <Toggle on={accToggle.valueOf(a.id, a.sync_enabled)} onChange={() => accToggle.toggle(a.id, !accToggle.valueOf(a.id, a.sync_enabled))} />
                     </td>
                     <td className="py-3 text-xs">
                       {a.last_error ? (

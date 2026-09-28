@@ -58,7 +58,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </p>
         </div>
         <DataProvider campaigns={data.campaigns} clients={data.clients} lastSync={data.lastSync}>
-          <DashboardView fixedClientId={link.client_id} hideRevenue={!link.show_revenue} hideCreatives={!link.show_creatives} />
+          <DashboardView fixedClientId={link.client_id} hideRevenue={!link.show_revenue} hideCreatives={!link.show_creatives} reportHref={`/share/${token}/relatorio`} />
         </DataProvider>
         <p className="mt-10 text-center text-xs text-ash-500">
           Painel gerado por <span className="text-fire-400">EVX Fire</span> · somente visualização

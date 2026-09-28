@@ -225,6 +225,42 @@ body {
     transform: scale(0.98, 1.06) skewX(1deg);
   }
 }
+.flame-mid {
+  transform-origin: 50% 100%;
+  transform-box: fill-box;
+  animation: flame-dance 1.35s ease-in-out infinite alternate;
+  animation-delay: -0.4s;
+}
+.flame-outer,
+.flame-inner {
+  transform-box: fill-box;
+}
+.flame-spark {
+  transform-box: fill-box;
+  animation: spark-rise 2.2s ease-out infinite;
+  opacity: 0;
+}
+.flame-spark-2 {
+  animation-delay: 0.8s;
+  animation-duration: 2.6s;
+}
+.flame-spark-3 {
+  animation-delay: 1.5s;
+  animation-duration: 1.9s;
+}
+@keyframes spark-rise {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(3px, -26px) scale(0.3);
+    opacity: 0;
+  }
+}
 .flame-glow {
   animation: glow-pulse 2.4s ease-in-out infinite;
 }
@@ -335,4 +371,35 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ---------- Relatório em PDF ---------- */
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  html,
+  body {
+    background: var(--color-coal-900) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  canvas,
+  .no-print {
+    display: none !important;
+  }
+  .report-page {
+    break-after: page;
+    box-shadow: none !important;
+    width: 210mm !important;
+    min-height: 297mm;
+  }
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.report-page {
+  min-height: 1123px;
 }

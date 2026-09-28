@@ -21,6 +21,7 @@ export interface Creative {
   format: CreativeFormat;
   headline: string;
   media?: { type: "image" | "video"; url: string }[];
+  adSetId?: string;
   videoUrl?: string;
   cta?: string;
   body: string;
@@ -40,6 +41,7 @@ export interface Campaign {
   clientId: string;
   platform: Platform;
   source: Source;
+  adsets?: { id: string; name: string; active: boolean }[];
   name: string;
   objective: string;
   status: CampaignStatus;
