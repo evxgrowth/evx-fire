@@ -70,7 +70,13 @@ async function post(db: SupabaseClient, dest: Destination, event: string, payloa
       error = res.ok ? null : (await res.text().catch(() => "")).slice(0, 300) || `HTTP ${res.status}`;
       if (res.ok || res.status < 500) break;
     } catch (e) {
-      error = e instanceof Error ? (e.name === "TimeoutError" ? "Tempo esgotado (30s) esperando resposta do CRM" : e.message) : String(e);
+      if (e instanceof Error && e.name === "TimeoutError") {
+        // O CRM pode estar processando: repetir só aumentaria a carga dos dois lados.
+        // O pacote volta na próxima rodada (não foi marcado como entregue).
+        error = "O CRM demorou mais de 30s para responder. Ele deve responder na hora e processar em segundo plano.";
+        break;
+      }
+      error = e instanceof Error ? e.message : String(e);
     }
   }
 
