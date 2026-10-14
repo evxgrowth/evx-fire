@@ -19,16 +19,20 @@ async function own(id: string) {
   return { me, dest: data as Destination };
 }
 
-export async function createDestination() {
+/** Cria o destino só quando o gestor clica em Salvar (antes não grava nada). */
+export async function createDestination(input: { name: string; url: string; active: boolean; filters: DestFilters }) {
   const me = await requireManager();
+  const url = input.url.trim();
+  if (url && !/^https:\/\//i.test(url)) return { ok: false as const, error: "O endereço precisa começar com https://" };
   const db = await createClient();
   const { data, error } = await db
     .from("destinations")
-    .insert({ agency_id: me.agencyId, name: "Meu CRM", secret: newSecret(), filters: normalizeFilters({}), active: false })
+    .insert({ agency_id: me.agencyId, name: input.name.trim() || "Meu CRM", url, active: input.active && !!url, secret: newSecret(), filters: normalizeFilters(input.filters) })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
-  redirect(`/destinos/${data.id}`);
+  if (error) return { ok: false as const, error: error.message };
+  revalidatePath("/integracoes");
+  return { ok: true as const, id: data.id as string };
 }
 
 export async function saveDestination(id: string, input: { name: string; url: string; active: boolean; filters: DestFilters }) {
@@ -41,6 +45,8 @@ export async function saveDestination(id: string, input: { name: string; url: st
     .update({ name: input.name.trim() || "Meu CRM", url, active: input.active && !!url, filters: normalizeFilters(input.filters) })
     .eq("id", id);
   if (error) return { ok: false as const, error: error.message };
+  // Filtros podem ter mudado: no próximo ciclo o destino recebe tudo de novo
+  await db.from("destination_state").delete().eq("destination_id", id);
   revalidatePath(`/destinos/${id}`);
   revalidatePath("/integracoes");
   return { ok: true as const };

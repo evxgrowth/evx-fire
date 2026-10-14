@@ -2,9 +2,11 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireManager } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { dispatchAgency } from "@/lib/fire/dispatch";
 import { lastDays } from "@/lib/repo";
 import type { CampaignStatus, Platform } from "@/lib/types";
 
@@ -66,9 +68,27 @@ export interface AdInput {
   media: { type: "image" | "video"; url: string; path?: string }[];
 }
 
+/** Evento: a conta manual mudou → envia ao CRM em segundo plano (depois de responder a tela). */
+function notifyAccount(agencyId: string, adAccountId: string) {
+  after(async () => {
+    await dispatchAgency(createAdminClient(), agencyId, { changed: new Set([adAccountId]) }).catch(() => null);
+  });
+}
+
+function notifyCampaign(campaignId: string) {
+  after(async () => {
+    const db = createAdminClient();
+    const { data } = await db.from("campaigns").select("agency_id, ad_account_id").eq("id", campaignId).maybeSingle();
+    if (data) await dispatchAgency(db, data.agency_id, { changed: new Set([data.ad_account_id]) }).catch(() => null);
+  });
+}
+
 function refresh(campaignId?: string) {
   revalidatePath("/", "layout");
-  if (campaignId) revalidatePath(`/campanhas/${campaignId}`);
+  if (campaignId) {
+    revalidatePath(`/campanhas/${campaignId}`);
+    notifyCampaign(campaignId);
+  }
 }
 
 async function ctx() {
@@ -118,7 +138,7 @@ export async function createManualCampaign(i: CampaignInput) {
     .select("id")
     .single();
   if (error) return { ok: false as const, error: error.message };
-  refresh();
+  refresh(data.id as string);
   return { ok: true as const, id: data.id as string };
 }
 
@@ -132,9 +152,11 @@ export async function updateManualCampaign(id: string, i: CampaignInput) {
 }
 
 export async function deleteManualCampaign(id: string) {
-  const { db } = await ctx();
+  const { me, db } = await ctx();
+  const { data } = await db.from("campaigns").select("ad_account_id").eq("id", id).maybeSingle();
   await db.from("campaigns").delete().eq("id", id).eq("source", "manual");
   refresh();
+  if (data) notifyAccount(me.agencyId, data.ad_account_id);
 }
 
 // ---------- Lançamentos de resultados ----------

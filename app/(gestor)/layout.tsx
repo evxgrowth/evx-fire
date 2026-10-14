@@ -15,8 +15,7 @@ export default async function GestorLayout({ children }: { children: React.React
   const data = await loadAgencyData(db, me.agencyId);
 
   // Sem nenhuma conta conectada ainda: mostra a demonstração com um aviso.
-  const { count } = await db.from("ad_accounts").select("id", { count: "exact", head: true }).eq("agency_id", me.agencyId);
-  const demo = !count;
+  const demo = !data.hasAccounts;
   const { data: prefRow } = await db.from("user_preferences").select("prefs").eq("user_id", me.id).maybeSingle();
 
   return (

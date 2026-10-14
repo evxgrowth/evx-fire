@@ -79,24 +79,44 @@ export function LiveBadge({ lastSync }: { lastSync?: string | null }) {
 export function SyncButton() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const flash = (t: string) => {
+    setNote(t);
+    setTimeout(() => setNote(null), 4500);
+  };
   return (
-    <button
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await fetch("/api/sync", { method: "POST" });
-          router.refresh();
-        } finally {
-          setBusy(false);
-        }
-      }}
-      disabled={busy}
-      className="grid h-9 w-9 place-items-center rounded-xl border border-white/5 bg-white/[0.03] text-ash-300 hover:text-fire-300 disabled:opacity-60"
-      title="Sincronizar agora"
-      aria-label="Sincronizar agora"
-    >
-      <RefreshCw size={16} className={busy ? "animate-spin text-fire-400" : ""} />
-    </button>
+    <div className="relative">
+      <button
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await fetch("/api/sync", { method: "POST" });
+            const j = await r.json().catch(() => ({}));
+            if (r.status === 429) return flash(j.message ?? "Aguarde alguns minutos.");
+            // Só recarrega a tela se algo realmente mudou
+            if (j.changed > 0) router.refresh();
+            flash(j.changed > 0 ? "Dados atualizados." : "Tudo em dia: nada mudou desde a última atualização.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+        disabled={busy}
+        className="grid h-9 w-9 place-items-center rounded-xl border border-white/5 bg-white/[0.03] text-ash-300 hover:text-fire-300 disabled:opacity-60"
+        title="Sincronizar agora"
+        aria-label="Sincronizar agora"
+      >
+        <RefreshCw size={16} className={busy ? "animate-spin text-fire-400" : ""} />
+      </button>
+      {note && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute right-0 top-11 z-50 w-64 rounded-xl border border-fire-500/25 bg-coal-900/95 px-3 py-2 text-xs text-ash-200 shadow-xl backdrop-blur"
+        >
+          {note}
+        </motion.div>
+      )}
+    </div>
   );
 }
 

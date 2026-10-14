@@ -5,8 +5,8 @@ import { createAdminClient, createClient } from "@/lib/supabase/server";
 
 export async function createSuperAdmin(_: string | null, form: FormData): Promise<string | null> {
   const db = createAdminClient();
-  const { count } = await db.from("profiles").select("id", { count: "exact", head: true }).eq("role", "super_admin");
-  if (count) return "O Super Admin já foi criado. Use a tela de login.";
+  const { data: admin } = await db.from("profiles").select("id").eq("role", "super_admin").limit(1);
+  if (admin?.length) return "O Super Admin já foi criado. Use a tela de login.";
 
   const name = String(form.get("name") ?? "").trim();
   const agencyName = String(form.get("agency") ?? "").trim();

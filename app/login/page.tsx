@@ -17,8 +17,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (me) redirect(me.role === "super_admin" ? "/admin" : "/dashboard");
 
   // Primeira vez: ainda não existe Super Admin → vai para a configuração inicial
-  const { count } = await createAdminClient().from("profiles").select("id", { count: "exact", head: true }).eq("role", "super_admin");
-  if (!count) redirect("/setup");
+  const { data: admin } = await createAdminClient().from("profiles").select("id").eq("role", "super_admin").limit(1);
+  if (!admin?.length) redirect("/setup");
 
   const { erro } = await searchParams;
 

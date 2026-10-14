@@ -135,7 +135,7 @@ export function dateRange(since: string, until: string) {
 }
 
 /** Carrega a árvore da agência. O histórico diário vai de `since` a `until` (padrão: últimos 90 dias). */
-export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts: { since?: string; until?: string; withDaily?: boolean } = {}): Promise<AgencyTree> {
+export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts: { since?: string; until?: string; withDaily?: boolean; onlyAccounts?: string[] } = {}): Promise<AgencyTree> {
   const d90 = lastDays(90);
   const since = opts.since ?? d90[0];
   const until = opts.until ?? d90[d90.length - 1];
@@ -146,7 +146,10 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts:
   ]);
   // Só busca o que pode ser enviado: contas ativas de clientes ativos
   const inactiveClients = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
-  const okAccounts = (accounts ?? []).filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactiveClients.has(acc.client_id))).map((acc) => acc.id as string);
+  const okAccounts = (accounts ?? [])
+    .filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactiveClients.has(acc.client_id)))
+    .filter((acc) => !opts.onlyAccounts || opts.onlyAccounts.includes(acc.id))
+    .map((acc) => acc.id as string);
   const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 150) }, (_, i) => ids.slice(i * 150, i * 150 + 150));
   const camps = (await Promise.all(chunks(okAccounts).map((ids) => fetchAll((a, b) => db.from("campaigns").select("*").in("ad_account_id", ids).range(a, b))))).flat();
   const campIds = camps.map((c) => c.id as string);
@@ -167,7 +170,7 @@ export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts:
   // Clientes desativados não são enviados a nenhum destino
   const inactive = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
   // Contas desativadas e clientes inativos não são enviados
-  const tree = (accounts ?? []).filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactive.has(acc.client_id))).map((acc) => ({
+  const tree = (accounts ?? []).filter((acc) => okAccounts.includes(acc.id)).map((acc) => ({
     id: acc.id,
     external_id: acc.external_id,
     name: acc.name,

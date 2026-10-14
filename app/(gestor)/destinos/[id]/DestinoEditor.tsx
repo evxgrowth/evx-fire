@@ -29,7 +29,7 @@ import Select from "@/components/kit/Select";
 import { statusLabels } from "@/components/StatusLed";
 import { applyFilters, countTree, type DestFilters, type NodeAccount } from "@/lib/fire/filters";
 import type { CampaignStatus } from "@/lib/types";
-import { deleteDestination, regenerateApiKey, regenerateSecret, saveDestination, sendNow, testDestination } from "../actions";
+import { createDestination, deleteDestination, regenerateApiKey, regenerateSecret, saveDestination, sendNow, testDestination } from "../actions";
 
 export interface DeliveryRow {
   id: string;
@@ -151,7 +151,7 @@ function Check3({ state, onClick }: { state: "on" | "off" | "inherit"; onClick?:
 const LED = ({ active }: { active: boolean }) => <span className={`led ${active ? "led-active" : "led-paused"}`} />;
 
 // ---------- editor ----------
-export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestProps; tree: Tree; deliveries: DeliveryRow[] }) {
+export default function DestinoEditor({ dest, tree, deliveries, isNew = false }: { dest: DestProps; tree: Tree; deliveries: DeliveryRow[]; isNew?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const { confirm } = useDialog();
@@ -183,6 +183,12 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
 
   const save = () =>
     start(async () => {
+      if (isNew) {
+        const c = await createDestination({ name, url, active, filters: f });
+        if (c.ok) router.replace(`/destinos/${c.id}`);
+        else setMsg({ tone: "bad", text: c.error });
+        return;
+      }
       const r = await saveDestination(dest.id, { name, url, active, filters: f });
       setMsg(r.ok ? { tone: "good", text: "Configurações salvas." } : { tone: "bad", text: r.error });
       router.refresh();
@@ -219,6 +225,11 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
           </label>
         </div>
 
+        {isNew ? (
+          <p className="mt-4 rounded-xl border border-dashed border-fire-500/25 p-3 text-xs text-ash-400">
+            O <b className="text-ash-200">segredo de assinatura</b> e a <b className="text-ash-200">chave de API</b> aparecem aqui depois que você salvar o destino.
+          </p>
+        ) : (
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div>
             <span className="mb-1.5 flex items-center gap-2 text-xs font-medium text-ash-300">
@@ -284,6 +295,8 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
             )}
           </div>
         </div>
+
+        )}
 
         <div className="mt-4 rounded-xl border border-white/5 bg-white/[0.02] p-3 text-xs text-ash-400">
           <div className="flex flex-wrap items-center gap-2">
@@ -543,6 +556,8 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
         <button className="btn-fire" disabled={pending} onClick={save}>
           {pending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Salvar
         </button>
+        {!isNew && (
+        <>
         <button
           className="btn-ghost"
           disabled={pending || dirty}
@@ -589,6 +604,8 @@ export default function DestinoEditor({ dest, tree, deliveries }: { dest: DestPr
           }}>
           <Trash2 size={14} /> Excluir destino
         </button>
+        </>
+        )}
       </div>
 
       {/* ---------- Histórico ---------- */}

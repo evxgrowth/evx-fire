@@ -35,7 +35,10 @@ export async function toggleAgency(agencyId: string) {
   await requireSuperAdmin();
   const db = createAdminClient();
   const { data } = await db.from("agencies").select("status").eq("id", agencyId).single();
-  await db.from("agencies").update({ status: data?.status === "suspended" ? "active" : "suspended" }).eq("id", agencyId);
+  const suspending = data?.status !== "suspended";
+  await db.from("agencies").update({ status: suspending ? "suspended" : "active" }).eq("id", agencyId);
+  // O banco já bloqueia os dados na hora; derrubar as sessões força o gestor a sair
+  if (suspending) await db.rpc("revoke_agency_sessions", { p_agency: agencyId });
   revalidatePath("/admin", "layout");
 }
 

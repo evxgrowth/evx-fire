@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CampaignStatus, CreativeFormat } from "@/lib/types";
 import { graphBatch, graphGet, graphList } from "./graph";
@@ -151,6 +152,26 @@ function stillValid(u?: string | null) {
   }
 }
 
+/**
+ * Impressão digital de uma linha: igual = não precisa regravar.
+ * Fica de fora o que muda sem significar mudança: carimbo de hora e o link de prévia
+ * (a Meta gera um link de prévia novo a cada consulta).
+ */
+const rowHash = (row: Record<string, unknown>) => {
+  const { updated_at: _u, row_hash: _h, preview_url: _p, ...rest } = row; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return createHash("sha1").update(JSON.stringify(rest)).digest("base64");
+};
+const sameTime = (a?: string | null, b?: string | null) => (a ? Date.parse(a) : 0) === (b ? Date.parse(b) : 0);
+
+export interface SyncOutcome {
+  mode: "light" | "full";
+  /** algo mudou no banco? (é o "evento" que dispara o envio ao CRM) */
+  changed: boolean;
+  /** campos da conta para gravar numa única atualização no fim */
+  patch: Record<string, unknown>;
+  written: number;
+}
+
 type Child = { picture?: string; image_hash?: string; video_id?: string; link?: string; name?: string };
 type FeedSpec = NonNullable<NonNullable<MetaAd["creative"]>["asset_feed_spec"]>;
 
@@ -160,7 +181,7 @@ type FeedSpec = NonNullable<NonNullable<MetaAd["creative"]>["asset_feed_spec"]>;
  * - métricas diárias: 3 dias nas rodadas normais, 90 dias uma vez por dia, 13 meses uma única vez;
  * - imagens: só busca de novo quando o link salvo está perto de expirar.
  */
-export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, token: string, opts: { force?: boolean; allowBackfill?: boolean } = {}) {
+export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, token: string, opts: { force?: boolean; allowBackfill?: boolean } = {}): Promise<SyncOutcome> {
   const act = account.external_id; // "act_123"
   const now = new Date().toISOString();
   const range = JSON.stringify({ since: daysAgo(DAYS - 1), until: today() });
@@ -173,7 +194,16 @@ export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, 
       fields: "id,name,objective,effective_status,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time",
     }),
   ]);
-  if (info.account_status != null) await db.from("ad_accounts").update({ account_status: info.account_status }).eq("id", account.id);
+  const patch: Record<string, unknown> = info.account_status != null ? { account_status: info.account_status } : {};
+
+  // O que já está no banco desta conta (para comparar e só gravar o que mudou)
+  const { data: oldCamps, error: oldErr } = await db
+    .from("campaigns")
+    .select("id, external_id, row_hash, name, status, effective_status, daily_budget, lifetime_budget, stop_time, bid_strategy, objective_raw")
+    .eq("ad_account_id", account.id);
+  if (oldErr) throw new Error(oldErr.message);
+  const oldBy = new Map((oldCamps ?? []).map((c) => [c.external_id as string, c]));
+  const campId = new Map<string, string>((oldCamps ?? []).map((c) => [c.external_id as string, c.id as string]));
 
   const campBase = (c: MetaCampaign) => ({
     agency_id: account.agency_id,
@@ -197,11 +227,25 @@ export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, 
 
   // 2) Modo leve: nada rodando e a completa foi há menos de 6h → só status, nomes e orçamentos
   if (!opts.force && !running && hoursSince(account.last_full_sync_at) < 6) {
-    for (let i = 0; i < visible.length; i += 300) {
-      const { error } = await db.from("campaigns").upsert(visible.slice(i, i + 300).map(campBase), { onConflict: "ad_account_id,external_id" });
+    const changedBase = visible.map(campBase).filter((b) => {
+      const o = oldBy.get(b.external_id);
+      return (
+        !o ||
+        o.name !== b.name ||
+        o.status !== b.status ||
+        o.effective_status !== b.effective_status ||
+        Number(o.daily_budget) !== b.daily_budget ||
+        Number(o.lifetime_budget) !== b.lifetime_budget ||
+        o.bid_strategy !== b.bid_strategy ||
+        o.objective_raw !== b.objective_raw ||
+        !sameTime(o.stop_time, b.stop_time)
+      );
+    });
+    for (let i = 0; i < changedBase.length; i += 300) {
+      const { error } = await db.from("campaigns").upsert(changedBase.slice(i, i + 300), { onConflict: "ad_account_id,external_id" });
       if (error) throw new Error(error.message);
     }
-    return { mode: "light" as const, campaigns: visible.length };
+    return { mode: "light", changed: changedBase.length > 0, patch, written: changedBase.length };
   }
 
   // 3) Completa
@@ -234,18 +278,19 @@ export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, 
   // ---------- Campanhas ----------
   const withData = new Set(daily.map((d) => d.campaign_id));
   const relevant = camps.filter((c) => withData.has(c.id) || (c.effective_status !== "ARCHIVED" && c.effective_status !== "DELETED"));
-  const campId = new Map<string, string>();
-  for (let i = 0; i < relevant.length; i += 300) {
-    const { data, error } = await db
-      .from("campaigns")
-      .upsert(
-        relevant.slice(i, i + 300).map((c) => ({ ...campBase(c), reach_30d: campTot.get(c.id)?.reach ?? 0, metrics_30d: campTot.get(c.id) ?? {} })),
-        { onConflict: "ad_account_id,external_id" },
-      )
-      .select("id, external_id");
+  let written = 0;
+  const campRows = relevant
+    .map((c) => {
+      const row = { ...campBase(c), reach_30d: campTot.get(c.id)?.reach ?? 0, metrics_30d: campTot.get(c.id) ?? {} };
+      return { ...row, row_hash: rowHash(row) };
+    })
+    .filter((r) => oldBy.get(r.external_id)?.row_hash !== r.row_hash);
+  for (let i = 0; i < campRows.length; i += 300) {
+    const { data, error } = await db.from("campaigns").upsert(campRows.slice(i, i + 300), { onConflict: "ad_account_id,external_id" }).select("id, external_id");
     if (error) throw new Error(error.message);
     for (const r of data ?? []) campId.set(r.external_id as string, r.id as string);
   }
+  written += campRows.length;
 
   const dailyRows = daily
     .filter((d) => campId.has(d.campaign_id!))
@@ -287,19 +332,31 @@ export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, 
       metrics_30d: setTot.get(s.id) ?? {},
       updated_at: now,
     }));
+  const allCampIds = [...campId.values()];
   const setId = new Map<string, string>();
-  for (let i = 0; i < setRows.length; i += 300) {
-    const { data, error: e } = await db.from("ad_sets").upsert(setRows.slice(i, i + 300), { onConflict: "campaign_id,external_id" }).select("id, external_id");
+  const oldSetHash = new Map<string, string | null>();
+  for (let i = 0; i < allCampIds.length; i += 150) {
+    const { data, error: e } = await db.from("ad_sets").select("id, external_id, row_hash").in("campaign_id", allCampIds.slice(i, i + 150));
+    if (e) throw new Error(e.message);
+    for (const r of data ?? []) {
+      setId.set(r.external_id, r.id);
+      oldSetHash.set(r.external_id, r.row_hash);
+    }
+  }
+  const setChanged = setRows.map((r) => ({ ...r, row_hash: rowHash(r) })).filter((r) => oldSetHash.get(r.external_id) !== r.row_hash);
+  for (let i = 0; i < setChanged.length; i += 300) {
+    const { data, error: e } = await db.from("ad_sets").upsert(setChanged.slice(i, i + 300), { onConflict: "campaign_id,external_id" }).select("id, external_id");
     if (e) throw new Error(e.message);
     for (const r of data ?? []) setId.set(r.external_id, r.id);
   }
+  written += setChanged.length;
   const setGoal = new Map(adsets.map((s) => [s.id, { goal: s.optimization_goal ?? "", promoted: s.promoted_object ?? null }]));
 
   // ---------- Imagens: reaproveita as que ainda valem ----------
   const campIds = [...campId.values()];
-  const existing = new Map<string, { image_url: string | null; thumbnail_url: string | null; media: { type: string; url: string }[] | null }>();
+  const existing = new Map<string, { image_url: string | null; thumbnail_url: string | null; media: { type: string; url: string }[] | null; row_hash: string | null }>();
   for (let i = 0; i < campIds.length; i += 150) {
-    const { data } = await db.from("creatives").select("external_id, image_url, thumbnail_url, media").in("campaign_id", campIds.slice(i, i + 150));
+    const { data } = await db.from("creatives").select("external_id, image_url, thumbnail_url, media, row_hash").in("campaign_id", campIds.slice(i, i + 150));
     for (const r of data ?? []) existing.set(r.external_id, r);
   }
   const childrenOf = (a: MetaAd) => (a.creative?.object_story_spec?.link_data?.child_attachments ?? []) as Child[];
@@ -411,39 +468,59 @@ export async function syncMetaAccount(db: SupabaseClient, account: SyncAccount, 
         updated_at: now,
       };
     });
-  for (let i = 0; i < creatives.length; i += 300) {
-    const { error: e } = await db.from("creatives").upsert(creatives.slice(i, i + 300), { onConflict: "campaign_id,external_id" });
+  const adChanged = creatives.map((r) => ({ ...r, row_hash: rowHash(r) })).filter((r) => existing.get(r.external_id)?.row_hash !== r.row_hash);
+  for (let i = 0; i < adChanged.length; i += 300) {
+    const { error: e } = await db.from("creatives").upsert(adChanged.slice(i, i + 300), { onConflict: "campaign_id,external_id" });
     if (e) throw new Error(e.message);
   }
+  written += adChanged.length;
 
-  await db
-    .from("ad_accounts")
-    .update({
-      last_full_sync_at: now,
-      ...(dailyDays >= 90 ? { last_daily_full_at: now } : {}),
-      ...(backfill ? { history_backfilled_at: now } : {}),
-    })
-    .eq("id", account.id);
-  return { mode: "full" as const, campaigns: relevant.length, adsets: setRows.length, ads: creatives.length, days: dailyDays, imagesFetched: refresh.length };
+  Object.assign(patch, {
+    last_full_sync_at: now,
+    ...(dailyDays >= 90 ? { last_daily_full_at: now } : {}),
+    ...(backfill ? { history_backfilled_at: now } : {}),
+  });
+  // Mudou se alguma campanha/conjunto/anúncio mudou, ou se o histórico diário foi recarregado
+  return { mode: "full", changed: written > 0 || dailyDays >= 90, patch, written };
+}
+
+export interface SyncResult {
+  account: string;
+  accountId: string;
+  agency: string;
+  ok: boolean;
+  mode?: string;
+  changed?: boolean;
+  error?: string;
 }
 
 /**
  * Sincroniza as contas Meta ativas de uma agência (ou de todas).
- * `force`: botão "Sincronizar agora" — faz a completa mesmo sem campanha rodando.
- * O histórico de 13 meses é baixado para no máximo UMA conta por rodada, para não pesar.
+ * - `manual` (botão "Sincronizar agora"): faz a completa e respeita a espera de 5 min.
+ * - Trava por agência: nunca roda duas sincronizações da mesma agência ao mesmo tempo.
+ * - O histórico de 13 meses é baixado para no máximo UMA conta por rodada, para não pesar.
+ * - Cada conta recebe uma única atualização de status no fim.
  */
-export async function syncMeta(db: SupabaseClient, agencyId?: string, opts: { force?: boolean } = {}) {
+export async function syncMeta(db: SupabaseClient, agencyId?: string, opts: { manual?: boolean; force?: boolean } = {}) {
   let q = db
     .from("ad_accounts")
-    .select("id, agency_id, external_id, last_full_sync_at, last_daily_full_at, history_backfilled_at, platform_connections(access_token)")
+    .select("id, agency_id, external_id, last_full_sync_at, last_daily_full_at, history_backfilled_at, account_status, last_error, platform_connections(access_token)")
     .eq("platform", "meta")
     .eq("sync_enabled", true);
   if (agencyId) q = q.eq("agency_id", agencyId);
   const { data: accounts, error } = await q;
   if (error) throw new Error(error.message);
 
-  const results: { account: string; agency: string; ok: boolean; mode?: string; error?: string }[] = [];
-  const queue = [...(accounts ?? [])];
+  const results: SyncResult[] = [];
+  const blocked: { agency: string; reason: string }[] = [];
+  const locked: string[] = [];
+  for (const agency of new Set((accounts ?? []).map((a) => a.agency_id as string))) {
+    const { data: lock } = await db.rpc("try_sync_lock", { p_agency: agency, p_seconds: 280, p_manual: !!opts.manual });
+    if (lock === "ok") locked.push(agency);
+    else blocked.push({ agency, reason: String(lock) });
+  }
+
+  const queue = (accounts ?? []).filter((a) => locked.includes(a.agency_id));
   let backfillSlot = true;
   // 4 contas em paralelo para caber no tempo máximo do servidor
   const worker = async () => {
@@ -455,15 +532,22 @@ export async function syncMeta(db: SupabaseClient, agencyId?: string, opts: { fo
     const allowBackfill = backfillSlot && !a.history_backfilled_at;
     if (allowBackfill) backfillSlot = false;
     try {
-      const r = await syncMetaAccount(db, a, conn.access_token, { force: opts.force, allowBackfill });
-      await db.from("ad_accounts").update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", a.id);
-      results.push({ account: a.external_id, agency: a.agency_id, ok: true, mode: r.mode });
+      const r = await syncMetaAccount(db, a, conn.access_token, { force: opts.manual || opts.force, allowBackfill });
+      const update: Record<string, unknown> = { last_synced_at: new Date().toISOString(), ...r.patch };
+      if (a.last_error) update.last_error = null;
+      if (update.account_status === a.account_status) delete update.account_status;
+      await db.from("ad_accounts").update(update).eq("id", a.id);
+      results.push({ account: a.external_id, accountId: a.id, agency: a.agency_id, ok: true, mode: r.mode, changed: r.changed });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await db.from("ad_accounts").update({ last_error: msg.slice(0, 500) }).eq("id", a.id);
-      results.push({ account: a.external_id, agency: a.agency_id, ok: false, error: msg });
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+      if (msg !== a.last_error) await db.from("ad_accounts").update({ last_error: msg }).eq("id", a.id);
+      results.push({ account: a.external_id, accountId: a.id, agency: a.agency_id, ok: false, error: msg });
     }
   };
-  await Promise.all(Array.from({ length: 4 }, worker));
-  return results;
+  try {
+    await Promise.all(Array.from({ length: 4 }, worker));
+  } finally {
+    await Promise.all(locked.map((agency) => db.rpc("release_sync_lock", { p_agency: agency })));
+  }
+  return { results, blocked };
 }

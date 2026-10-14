@@ -20,7 +20,7 @@ export function PrefsProvider({ initial, children }: { initial: Prefs; children:
       const patch = pending.current;
       pending.current = {};
       savePrefs(patch).catch(() => {});
-    }, 800);
+    }, 1500);
   }, []);
 
   return <PrefsContext.Provider value={{ prefs, set }}>{children}</PrefsContext.Provider>;

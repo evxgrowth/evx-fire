@@ -6,12 +6,17 @@ import { dispatchAgency } from "@/lib/fire/dispatch";
 
 export const maxDuration = 300;
 
-/** Botão "Sincronizar agora" do gestor: atualiza as contas da agência dele e envia aos destinos. */
+/** Botão "Sincronizar agora": atualiza as contas da agência e envia ao CRM o que mudou. */
 export async function POST() {
   const me = await getMe();
   if (!me?.agencyId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = createAdminClient();
-  const results = await syncMeta(db, me.agencyId, { force: true });
-  const dispatched = await dispatchAgency(db, me.agencyId).catch(() => []);
-  return NextResponse.json({ ok: results.every((r) => r.ok), results, dispatched });
+  const { results, blocked } = await syncMeta(db, me.agencyId, { manual: true });
+  if (blocked.length) {
+    const reason = blocked[0].reason;
+    return NextResponse.json({ ok: false, reason, message: reason === "busy" ? "Já existe uma atualização em andamento." : "Atualizado há pouco. Tente de novo em alguns minutos." }, { status: 429 });
+  }
+  const changed = new Set(results.filter((r) => r.changed).map((r) => r.accountId));
+  await dispatchAgency(db, me.agencyId, { changed }).catch(() => []);
+  return NextResponse.json({ ok: results.every((r) => r.ok), changed: changed.size });
 }

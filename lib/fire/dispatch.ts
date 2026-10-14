@@ -102,8 +102,6 @@ async function finish(db: SupabaseClient, dest: Destination, results: { ok: bool
     .from("destinations")
     .update({ last_sent_at: new Date().toISOString(), last_status: failed?.status ?? results.at(-1)?.status ?? null, last_error: failed?.error ?? null })
     .eq("id", dest.id);
-  // Mantém só 7 dias de histórico de entregas
-  await db.from("deliveries").delete().eq("destination_id", dest.id).lt("created_at", new Date(Date.now() - 7 * 86400000).toISOString());
 }
 
 /** 404 = a integração não existe ou foi desligada no CRM: desliga o envio automático e deixa o aviso. */
@@ -129,9 +127,9 @@ export async function sendPing(db: SupabaseClient, dest: Destination, agencyName
  * Para não sobrecarregar o CRM, pula a conta cujo pacote não mudou desde o último envio com sucesso
  * (mesmo assim reenvia pelo menos 1x por dia). `force` (Enviar agora) envia tudo.
  */
-export async function sendSnapshot(db: SupabaseClient, dest: Destination, tree?: AgencyTree, opts: { force?: boolean } = {}) {
+export async function sendSnapshot(db: SupabaseClient, dest: Destination, tree?: AgencyTree, opts: { force?: boolean; accounts?: Set<string> } = {}) {
   const data = tree ?? (await loadAgencyTree(db, dest.agency_id));
-  const packs = buildAccountPayloads(data, dest.filters);
+  const packs = buildAccountPayloads(data, dest.filters).filter((p) => !opts.accounts || opts.accounts.has(p.ad_account.id));
   const { data: states } = await db.from("destination_state").select("ad_account_id, hash, sent_at").eq("destination_id", dest.id);
   const stateBy = new Map((states ?? []).map((s) => [s.ad_account_id as string, s]));
   const results = [];
@@ -158,12 +156,51 @@ export async function sendSnapshot(db: SupabaseClient, dest: Destination, tree?:
   return { sent: results.length, failed: results.filter((r) => !r.ok).length, skipped };
 }
 
-/** Depois de cada sincronização: envia para todos os destinos ativos da agência. */
-export async function dispatchAgency(db: SupabaseClient, agencyId: string) {
+const DAY = 24 * 3.6e6;
+
+/**
+ * Depois de cada sincronização: envia aos destinos ativos da agência SÓ as contas que mudaram
+ * (evento vindo da sincronização) ou que estão há mais de 24h sem envio para aquele destino.
+ * Contas sem mudança nem são lidas do banco.
+ */
+export async function dispatchAgency(db: SupabaseClient, agencyId: string, opts: { changed?: Set<string> } = {}) {
   const { data: dests } = await db.from("destinations").select("*").eq("agency_id", agencyId).eq("active", true).neq("url", "");
   if (!dests?.length) return [];
-  const tree = await loadAgencyTree(db, agencyId);
+  // Nada mudou e todos os destinos receberam algo nas últimas 23h → nem consulta o resto
+  const recent = (d: { last_sent_at: string | null }) => !!d.last_sent_at && Date.now() - Date.parse(d.last_sent_at) < DAY - 3.6e6;
+  if (!opts.changed?.size && dests.every(recent)) return [];
+
+  const [{ data: accs }, { data: states }] = await Promise.all([
+    db.from("ad_accounts").select("id, platform, sync_enabled, client_id, clients(active)").eq("agency_id", agencyId),
+    db.from("destination_state").select("destination_id, ad_account_id, sent_at").in("destination_id", dests.map((d) => d.id)),
+  ]);
+  const sendable = (accs ?? [])
+    .filter((a) => a.platform === "manual" || a.sync_enabled)
+    .filter((a) => {
+      const c = (Array.isArray(a.clients) ? a.clients[0] : a.clients) as { active: boolean } | null;
+      return !a.client_id || c?.active !== false;
+    })
+    .map((a) => a.id as string);
+  const sentAt = new Map((states ?? []).map((s) => [`${s.destination_id}:${s.ad_account_id}`, Date.parse(s.sent_at)]));
+
+  const need = new Map<string, Set<string>>();
+  for (const d of dests as Destination[]) {
+    const ids = sendable.filter((acc) => opts.changed?.has(acc) || !(Date.now() - (sentAt.get(`${d.id}:${acc}`) ?? 0) < DAY));
+    if (ids.length) need.set(d.id, new Set(ids));
+  }
+  if (!need.size) return [];
+
+  const union = [...new Set([...need.values()].flatMap((s) => [...s]))];
+  const tree = await loadAgencyTree(db, agencyId, { onlyAccounts: union });
   const out = [];
-  for (const d of dests as Destination[]) out.push({ destination: d.id, ...(await sendSnapshot(db, d, tree)) });
+  for (const d of dests as Destination[]) {
+    const accounts = need.get(d.id);
+    if (accounts) out.push({ destination: d.id, ...(await sendSnapshot(db, d, tree, { accounts })) });
+  }
   return out;
+}
+
+/** Limpeza diária (chamada pelo ciclo da madrugada): histórico de envios com mais de 7 dias. */
+export async function dailyMaintenance(db: SupabaseClient) {
+  await db.from("deliveries").delete().lt("created_at", new Date(Date.now() - 7 * DAY).toISOString());
 }

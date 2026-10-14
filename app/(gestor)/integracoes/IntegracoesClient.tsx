@@ -11,7 +11,6 @@ import { useDialog } from "@/components/kit/Dialogs";
 import Select from "@/components/kit/Select";
 import { useBatchedToggle } from "@/components/useBatchedToggle";
 import { assignAccount, createClientRecord, setAccountsEnabled } from "../actions";
-import { createDestination } from "../destinos/actions";
 
 export interface AccountRow {
   id: string;
@@ -278,11 +277,9 @@ export default function IntegracoesClient({
         }
         subtitle="Conecte seu CRM (ou qualquer sistema) e escolha quais campanhas, conjuntos e anúncios ele recebe."
         action={
-          <form action={createDestination}>
-            <button className="btn-fire !py-2 !text-xs">
-              <Plus size={14} /> Novo destino
-            </button>
-          </form>
+          <Link href="/destinos/novo" className="btn-fire !py-2 !text-xs">
+            <Plus size={14} /> Novo destino
+          </Link>
         }
       >
         {!destinations.length ? (

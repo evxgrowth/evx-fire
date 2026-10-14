@@ -45,6 +45,8 @@ export interface AgencyData {
   campaigns: Campaign[];
   clients: Client[];
   lastSync: string | null;
+  /** a agência tem alguma conta (conectada ou manual)? */
+  hasAccounts: boolean;
 }
 
 /**
@@ -83,7 +85,7 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
   const accountIds = [...accById.values()]
     .filter((a) => (a.platform === "manual" || a.sync_enabled) && (!a.client_id || !inactive.has(a.client_id)))
     .map((a) => a.id as string);
-  if (!accountIds.length) return { campaigns: [], clients, lastSync: null };
+  if (!accountIds.length) return { campaigns: [], clients, lastSync: null, hasAccounts: accById.size > 0 };
 
   const camps = await fetchAll<{ id: string; ad_account_id: string; platform: "meta" | "google"; source: Campaign["source"]; name: string; objective: string; status: Campaign["status"]; daily_budget: number; reach_30d: number }>((a, b) =>
     db.from("campaigns").select("id, ad_account_id, platform, source, name, objective, status, daily_budget, reach_30d").in("ad_account_id", accountIds).range(a, b),
@@ -170,5 +172,5 @@ export async function loadAgencyData(db: SupabaseClient, agencyId: string, onlyC
     });
 
   const syncs = (accounts ?? []).map((a) => a.last_synced_at as string | null).filter(Boolean) as string[];
-  return { campaigns, clients, lastSync: syncs.sort().at(-1) ?? null };
+  return { campaigns, clients, lastSync: syncs.sort().at(-1) ?? null, hasAccounts: true };
 }

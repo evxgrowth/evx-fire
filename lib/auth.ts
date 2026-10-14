@@ -13,13 +13,38 @@ export interface Me {
   agencyStatus: "active" | "trial" | "suspended";
 }
 
-/** Usuário logado + perfil. Retorna null se não houver sessão. */
+interface AppClaims {
+  agency_id: string | null;
+  role: Me["role"];
+  name: string | null;
+  email: string | null;
+  agency_name: string | null;
+  agency_status: Me["agencyStatus"] | null;
+}
+
+/**
+ * Usuário logado + perfil. Retorna null se não houver sessão.
+ * O perfil vem DENTRO do token (gancho de login), validado localmente: nenhuma ida ao banco.
+ */
 export const getMe = cache(async (): Promise<Me | null> => {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims as (Record<string, unknown> & { sub?: string; email?: string; app?: AppClaims }) | undefined;
+  if (!claims?.sub) return null;
+  const app = claims.app;
+  if (app) {
+    return {
+      id: claims.sub,
+      email: app.email || claims.email || "",
+      fullName: app.name ?? "",
+      role: app.role,
+      agencyId: app.agency_id,
+      agencyName: app.agency_name ?? "",
+      agencyStatus: app.agency_status ?? "active",
+    };
+  }
+  // Token antigo (emitido antes do gancho): consulta o perfil uma vez
+  const user = { id: claims.sub, email: claims.email };
   const { data: p } = await supabase
     .from("profiles")
     .select("full_name, email, role, agency_id, agencies(name, status)")

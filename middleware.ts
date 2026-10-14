@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC = ["/login", "/setup", "/share", "/api/meta/callback", "/api/cron", "/api/v1", "/politica-de-privacidade", "/termos-de-uso", "/exclusao-de-dados"];
+const PUBLIC = ["/login", "/setup", "/share", "/api/meta/callback"];
 
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: req });
@@ -16,13 +16,14 @@ export async function middleware(req: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims valida o token localmente (chaves ES256): não vai ao servidor de login a cada clique.
+  // Só faz uma chamada quando a sessão precisa ser renovada (~1x por hora).
+  const { data } = await supabase.auth.getClaims();
+  const signedIn = !!data?.claims?.sub;
 
   const path = req.nextUrl.pathname;
   const isPublic = path === "/" || PUBLIC.some((p) => path === p || path.startsWith(p + "/"));
-  if (!user && !isPublic) {
+  if (!signedIn && !isPublic) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
@@ -31,5 +32,6 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+  // Rotas que não usam sessão nem passam por aqui: arquivos, API pública, agendador e páginas legais
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/v1|api/cron|politica-de-privacidade|termos-de-uso|exclusao-de-dados|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
 };
