@@ -14,7 +14,7 @@ export default async function RelatorioPage({ searchParams }: { searchParams: Pr
   const me = await requireManager();
   const db = await createClient();
   const { f } = await searchParams;
-  const [data, { data: prefRow }] = await Promise.all([loadAgencyData(db, me.agencyId), db.from("user_preferences").select("prefs").eq("user_id", me.id).maybeSingle()]);
+  const [data, { data: prefRow }] = await Promise.all([loadAgencyData(me.agencyId), db.from("user_preferences").select("prefs").eq("user_id", me.id).maybeSingle()]);
   const prefs = (prefRow?.prefs ?? {}) as Record<string, unknown>;
   const filters = decodeFilters(f) ?? { ...defaultFilters, ...((prefs["filters.dashboard"] as Partial<Filters>) ?? {}), period: normalizePeriod(prefs["filters.period"]) };
 

@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { exchangeCode, graphGet, graphList } from "@/lib/meta/graph";
 import { syncMeta } from "@/lib/meta/sync";
 import { dispatchAgency } from "@/lib/fire/dispatch";
+import { invalidateAgency } from "@/lib/repo";
 
 export const maxDuration = 300;
 
@@ -68,6 +69,7 @@ export async function GET(req: NextRequest) {
     }
 
     const { results } = await syncMeta(db, me.agencyId, { force: true });
+    invalidateAgency(me.agencyId);
     await dispatchAgency(db, me.agencyId, { changed: new Set(results.filter((r) => r.changed).map((r) => r.accountId)) }).catch(() => null);
     const res = back(`meta=ok&contas=${accounts.length}`);
     res.cookies.delete("meta_oauth_state");

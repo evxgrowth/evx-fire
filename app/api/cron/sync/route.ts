@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { syncMeta } from "@/lib/meta/sync";
 import { dailyMaintenance, dispatchAgency } from "@/lib/fire/dispatch";
+import { invalidateAgency } from "@/lib/repo";
 
 export const maxDuration = 300;
 
@@ -22,6 +23,9 @@ export async function GET(req: NextRequest) {
     if (!changed.has(r.agency)) changed.set(r.agency, new Set());
     if (r.changed) changed.get(r.agency)!.add(r.accountId);
   }
+  // Evento: as telas dessas agências buscam os dados de novo na próxima vez que alguém abrir
+  // (nada é recalculado se ninguém abrir; a hora da última sincronização também fica certa)
+  for (const agency of changed.keys()) invalidateAgency(agency);
   // Agências com destino ativo também entram (envio diário de garantia, campanhas manuais)
   const { data: withDest } = await db.from("destinations").select("agency_id").eq("active", true).neq("url", "");
   for (const d of withDest ?? []) if (!changed.has(d.agency_id)) changed.set(d.agency_id, new Set());

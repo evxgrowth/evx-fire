@@ -2,6 +2,7 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
+import { invalidateAgency } from "@/lib/repo";
 import { requireSuperAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 
@@ -39,6 +40,7 @@ export async function toggleAgency(agencyId: string) {
   await db.from("agencies").update({ status: suspending ? "suspended" : "active" }).eq("id", agencyId);
   // O banco já bloqueia os dados na hora; derrubar as sessões força o gestor a sair
   if (suspending) await db.rpc("revoke_agency_sessions", { p_agency: agencyId });
+  invalidateAgency(agencyId);
   revalidatePath("/admin", "layout");
 }
 

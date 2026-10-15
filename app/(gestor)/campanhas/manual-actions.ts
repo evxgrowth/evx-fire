@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireManager } from "@/lib/auth";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { dispatchAgency } from "@/lib/fire/dispatch";
-import { lastDays } from "@/lib/repo";
+import { invalidateAgency, lastDays } from "@/lib/repo";
 import type { CampaignStatus, Platform } from "@/lib/types";
 
 // Campanhas manuais: vivem numa conta "manual" do cliente e se comportam
@@ -83,8 +83,9 @@ function notifyCampaign(campaignId: string) {
   });
 }
 
-function refresh(campaignId?: string) {
-  revalidatePath("/", "layout");
+/** Os dados mudaram: limpa só o cache desta agência (as telas buscam de novo uma vez). */
+function refresh(agencyId: string, campaignId?: string) {
+  invalidateAgency(agencyId);
   if (campaignId) {
     revalidatePath(`/campanhas/${campaignId}`);
     notifyCampaign(campaignId);
@@ -138,7 +139,7 @@ export async function createManualCampaign(i: CampaignInput) {
     .select("id")
     .single();
   if (error) return { ok: false as const, error: error.message };
-  refresh(data.id as string);
+  refresh(me.agencyId, data.id as string);
   return { ok: true as const, id: data.id as string };
 }
 
@@ -147,7 +148,7 @@ export async function updateManualCampaign(id: string, i: CampaignInput) {
   const accountId = await manualAccount(db, me.agencyId, i.clientId);
   const { error } = await db.from("campaigns").update({ ...campaignRow(i), ad_account_id: accountId }).eq("id", id).eq("source", "manual");
   if (error) return { ok: false as const, error: error.message };
-  refresh(id);
+  refresh(me.agencyId, id);
   return { ok: true as const };
 }
 
@@ -155,7 +156,7 @@ export async function deleteManualCampaign(id: string) {
   const { me, db } = await ctx();
   const { data } = await db.from("campaigns").select("ad_account_id").eq("id", id).maybeSingle();
   await db.from("campaigns").delete().eq("id", id).eq("source", "manual");
-  refresh();
+  refresh(me.agencyId);
   if (data) notifyAccount(me.agencyId, data.ad_account_id);
 }
 
@@ -243,7 +244,7 @@ export async function addEntry(campaignId: string, i: EntryInput) {
   });
   if (error) return { ok: false as const, error: error.message };
   await recompute(db, me.agencyId, campaignId);
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
   return { ok: true as const };
 }
 
@@ -251,7 +252,7 @@ export async function deleteEntry(campaignId: string, entryId: string) {
   const { me, db } = await ctx();
   await db.from("manual_entries").delete().eq("id", entryId);
   await recompute(db, me.agencyId, campaignId);
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
 }
 
 // ---------- Conjuntos (público) ----------
@@ -281,14 +282,14 @@ export async function saveAdSet(campaignId: string, i: AdSetInput) {
     ? await db.from("ad_sets").update(row).eq("id", i.id)
     : await db.from("ad_sets").insert({ ...row, agency_id: me.agencyId, campaign_id: campaignId, external_id: `manual-${randomUUID()}` });
   if (error) return { ok: false as const, error: error.message };
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
   return { ok: true as const };
 }
 
 export async function deleteAdSet(campaignId: string, id: string) {
-  const { db } = await ctx();
+  const { me, db } = await ctx();
   await db.from("ad_sets").delete().eq("id", id);
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
 }
 
 // ---------- Anúncios (criativos) ----------
@@ -316,15 +317,15 @@ export async function saveAd(campaignId: string, i: AdInput) {
     ? await db.from("creatives").update(row).eq("id", i.id)
     : await db.from("creatives").insert({ ...row, agency_id: me.agencyId, campaign_id: campaignId, external_id: `manual-${randomUUID()}` });
   if (error) return { ok: false as const, error: error.message };
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
   return { ok: true as const };
 }
 
 export async function deleteAd(campaignId: string, id: string) {
-  const { db } = await ctx();
+  const { me, db } = await ctx();
   const { data } = await db.from("creatives").select("media").eq("id", id).single();
   const paths = ((data?.media ?? []) as { path?: string }[]).map((m) => m.path).filter(Boolean) as string[];
   if (paths.length) await db.storage.from("creatives").remove(paths);
   await db.from("creatives").delete().eq("id", id);
-  refresh(campaignId);
+  refresh(me.agencyId, campaignId);
 }

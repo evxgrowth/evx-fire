@@ -3,12 +3,14 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { requireManager } from "@/lib/auth";
+import { invalidateAgency } from "@/lib/repo";
 import { createClient } from "@/lib/supabase/server";
 
 // Todas as ações usam a sessão do gestor: o banco só deixa mexer nos dados da agência dele.
 
-function refresh() {
-  revalidatePath("/", "layout");
+/** Os dados da agência mudaram: limpa só o cache dela (as telas buscam de novo uma vez). */
+function refresh(agencyId: string) {
+  invalidateAgency(agencyId);
 }
 
 export async function createClientRecord(name: string, segment = "", notes = "") {
@@ -16,20 +18,20 @@ export async function createClientRecord(name: string, segment = "", notes = "")
   const db = await createClient();
   const { data, error } = await db.from("clients").insert({ agency_id: me.agencyId, name: name.trim(), segment: segment.trim(), notes: notes.trim() }).select("id").single();
   if (error) throw new Error(error.message);
-  refresh();
+  refresh(me.agencyId);
   return data.id as string;
 }
 
 export async function updateClientRecord(id: string, name: string, segment: string, notes = "") {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   await db.from("clients").update({ name: name.trim(), segment: segment.trim(), notes: notes.trim() }).eq("id", id);
-  refresh();
+  refresh(me.agencyId);
 }
 
-/** Vários clientes de uma vez (fila de cliques da tela). Sem recarregar tudo: a tela já mudou. */
+/** Vários clientes de uma vez (fila de cliques da tela). A tela já mudou; aqui só grava e limpa o cache da agência. */
 export async function setClientsActive(changes: [string, boolean][]) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   const on = changes.filter(([, v]) => v).map(([id]) => id);
   const off = changes.filter(([, v]) => !v).map(([id]) => id);
@@ -41,11 +43,12 @@ export async function setClientsActive(changes: [string, boolean][]) {
     const { error } = await db.from("clients").update({ active: false }).in("id", off);
     if (error) throw new Error(error.message);
   }
+  refresh(me.agencyId);
 }
 
 /** Ativa/desativa várias contas de anúncio de uma vez. Conta desativada não sincroniza nem aparece. */
 export async function setAccountsEnabled(changes: [string, boolean][]) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   for (const value of [true, false]) {
     const ids = changes.filter(([, v]) => v === value).map(([id]) => id);
@@ -53,35 +56,37 @@ export async function setAccountsEnabled(changes: [string, boolean][]) {
     const { error } = await db.from("ad_accounts").update({ sync_enabled: value }).in("id", ids);
     if (error) throw new Error(error.message);
   }
+  refresh(me.agencyId);
 }
 
 /** Desativar esconde o cliente e as campanhas dele dos painéis, links e destinos. */
 export async function setClientActive(id: string, active: boolean) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   await db.from("clients").update({ active }).eq("id", id);
-  refresh();
+  refresh(me.agencyId);
 }
 
 export async function deleteClientRecord(id: string) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   await db.from("clients").delete().eq("id", id);
-  refresh();
+  refresh(me.agencyId);
 }
 
 export async function assignAccount(accountId: string, clientId: string | null) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   const { error } = await db.from("ad_accounts").update({ client_id: clientId }).eq("id", accountId);
   if (error) throw new Error(error.message);
+  refresh(me.agencyId);
 }
 
 export async function setAccountSync(accountId: string, enabled: boolean) {
-  await requireManager();
+  const me = await requireManager();
   const db = await createClient();
   await db.from("ad_accounts").update({ sync_enabled: enabled }).eq("id", accountId);
-  refresh();
+  refresh(me.agencyId);
 }
 
 export async function createShareLink(clientId: string, showRevenue: boolean, showCreatives: boolean) {

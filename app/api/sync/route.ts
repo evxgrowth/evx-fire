@@ -3,6 +3,7 @@ import { getMe } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { syncMeta } from "@/lib/meta/sync";
 import { dispatchAgency } from "@/lib/fire/dispatch";
+import { invalidateAgency } from "@/lib/repo";
 
 export const maxDuration = 300;
 
@@ -17,6 +18,7 @@ export async function POST() {
     return NextResponse.json({ ok: false, reason, message: reason === "busy" ? "Já existe uma atualização em andamento." : "Atualizado há pouco. Tente de novo em alguns minutos." }, { status: 429 });
   }
   const changed = new Set(results.filter((r) => r.changed).map((r) => r.accountId));
+  invalidateAgency(me.agencyId);
   await dispatchAgency(db, me.agencyId, { changed }).catch(() => []);
   return NextResponse.json({ ok: results.every((r) => r.ok), changed: changed.size });
 }

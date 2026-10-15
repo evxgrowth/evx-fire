@@ -5,7 +5,7 @@ import DataProvider from "@/components/DataProvider";
 import FlameLogo from "@/components/FlameLogo";
 import { LiveBadge } from "@/components/ui";
 import { createAdminClient } from "@/lib/supabase/server";
-import { loadAgencyData } from "@/lib/repo";
+import { loadPacked } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   }
 
   await db.from("share_links").update({ views: link.views + 1 }).eq("id", link.id);
-  const data = await loadAgencyData(db, link.agency_id, link.client_id);
+  const data = await loadPacked(link.agency_id, link.client_id);
 
   return (
     <div className="min-h-screen">
@@ -44,7 +44,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-4 py-3 md:px-8">
           <FlameLogo />
           <div className="ml-auto">
-            <LiveBadge lastSync={data.lastSync} />
+            <LiveBadge lastSync={data.last_sync} />
           </div>
         </div>
         <div className="ember-line opacity-40" />
@@ -57,7 +57,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
             Resultados das suas campanhas, atualizados automaticamente{agency?.name ? ` · gestão ${agency.name}` : ""}.
           </p>
         </div>
-        <DataProvider campaigns={data.campaigns} clients={data.clients} lastSync={data.lastSync}>
+        <DataProvider packed={data} lastSync={data.last_sync}>
           <DashboardView fixedClientId={link.client_id} hideRevenue={!link.show_revenue} hideCreatives={!link.show_creatives} reportHref={`/share/${token}/relatorio`} />
         </DataProvider>
         <p className="mt-10 text-center text-xs text-ash-500">

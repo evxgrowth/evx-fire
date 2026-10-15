@@ -22,7 +22,7 @@ export default async function ShareReportPage({ params, searchParams }: { params
   const client = (Array.isArray(link?.clients) ? link?.clients[0] : link?.clients) as { name: string; active: boolean } | null;
   if (!link || !link.active || agency?.status === "suspended" || client?.active === false) notFound();
 
-  const data = await loadAgencyData(db, link.agency_id, link.client_id);
+  const data = await loadAgencyData(link.agency_id, link.client_id);
   const filters = { ...(decodeFilters(f) ?? defaultFilters), clients: [link.client_id] };
 
   return (
