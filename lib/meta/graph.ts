@@ -9,8 +9,14 @@ export class MetaError extends Error {
   }
 }
 
+/** Uma chamada à Meta, com limite de 60 s: se a conexão travar, vira erro temporário (que é tentado de novo). */
 async function call<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: "no-store" });
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(60000) });
+  } catch (e) {
+    throw new MetaError(`Conexão com a Meta falhou: ${e instanceof Error ? e.name : "erro"}`, 2);
+  }
   const json = await res.json();
   if (!res.ok || json.error) {
     throw new MetaError(json.error?.message ?? `Erro ${res.status} na Meta`, json.error?.code);
@@ -79,6 +85,7 @@ export async function graphBatch<T>(token: string, paths: string[]): Promise<Map
     try {
       const res = await fetch("https://graph.facebook.com/", {
         method: "POST",
+        signal: AbortSignal.timeout(60000),
         body: new URLSearchParams({ access_token: token, batch: JSON.stringify(chunk.map((p) => ({ method: "GET", relative_url: p }))) }),
         cache: "no-store",
       });

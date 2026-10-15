@@ -9,16 +9,6 @@ export const PAYLOAD_VERSION = "1";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>;
 
-async function fetchAll(build: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: { message: string } | null }>) {
-  const out: Row[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await build(from, from + 999);
-    if (error) throw new Error(error.message);
-    out.push(...(data ?? []));
-    if (!data || data.length < 1000) break;
-  }
-  return out;
-}
 
 // ---------- Público (targeting) em linguagem simples ----------
 const GENDERS: Record<number, string> = { 1: "Homens", 2: "Mulheres" };
@@ -134,85 +124,86 @@ export function dateRange(since: string, until: string) {
   return out;
 }
 
-/** Carrega a árvore da agência. O histórico diário vai de `since` a `until` (padrão: últimos 90 dias). */
+/**
+ * Carrega a árvore da agência numa única chamada ao banco (função snapshot_data).
+ * O histórico diário vai de `since` a `until` (padrão: últimos 90 dias).
+ * Com o cliente do gestor, as regras de segurança valem; com a chave do servidor, vê tudo.
+ */
 export async function loadAgencyTree(db: SupabaseClient, agencyId: string, opts: { since?: string; until?: string; withDaily?: boolean; onlyAccounts?: string[] } = {}): Promise<AgencyTree> {
   const d90 = lastDays(90);
   const since = opts.since ?? d90[0];
   const until = opts.until ?? d90[d90.length - 1];
-  const [{ data: agency }, { data: accounts }, { data: clients }] = await Promise.all([
-    db.from("agencies").select("name").eq("id", agencyId).single(),
-    db.from("ad_accounts").select("id, external_id, name, currency, client_id, platform, sync_enabled").eq("agency_id", agencyId).order("name"),
-    db.from("clients").select("id, name, active").eq("agency_id", agencyId),
-  ]);
-  // Só busca o que pode ser enviado: contas ativas de clientes ativos
-  const inactiveClients = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
-  const okAccounts = (accounts ?? [])
-    .filter((acc) => (acc.platform === "manual" || acc.sync_enabled) && (!acc.client_id || !inactiveClients.has(acc.client_id)))
-    .filter((acc) => !opts.onlyAccounts || opts.onlyAccounts.includes(acc.id))
-    .map((acc) => acc.id as string);
-  const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 150) }, (_, i) => ids.slice(i * 150, i * 150 + 150));
-  const camps = (await Promise.all(chunks(okAccounts).map((ids) => fetchAll((a, b) => db.from("campaigns").select("*").in("ad_account_id", ids).range(a, b))))).flat();
-  const campIds = camps.map((c) => c.id as string);
-  const [sets, ads, daily] = await Promise.all([
-    Promise.all(chunks(campIds).map((ids) => fetchAll((a, b) => db.from("ad_sets").select("*").in("campaign_id", ids).range(a, b)))).then((x) => x.flat()),
-    Promise.all(chunks(campIds).map((ids) => fetchAll((a, b) => db.from("creatives").select("*").in("campaign_id", ids).range(a, b)))).then((x) => x.flat()),
-    Promise.all(
-      (opts.withDaily === false ? [] : chunks(campIds)).map((ids) =>
-        fetchAll((a, b) => db.from("campaign_daily").select("campaign_id, date, spend, impressions, reach, clicks, conversions, revenue").in("campaign_id", ids).gte("date", since).lte("date", until).order("date").range(a, b)),
-      ),
-    ).then((x) => x.flat()),
-  ]);
+  const { data, error } = await db.rpc("snapshot_data", {
+    p_agency: agencyId,
+    p_accounts: opts.onlyAccounts ?? null,
+    p_since: since,
+    p_until: until,
+    p_with_daily: opts.withDaily !== false,
+  });
+  if (error) throw new Error(error.message);
+  const snap = data as { agency_name: string | null; accounts: Row[]; clients: Row[]; campaigns: Row[]; adsets: Row[]; ads: Row[]; daily: Row[] };
 
-  const dailyBy = new Map<string, Row[]>();
-  for (const d of daily) (dailyBy.get(d.campaign_id) ?? dailyBy.set(d.campaign_id, []).get(d.campaign_id)!).push(d);
-  const clientBy = new Map((clients ?? []).map((c) => [c.id, c]));
+  // Índices em memória (em vez de procurar na lista toda a cada item)
+  const group = (rows: Row[], key: string) => {
+    const m = new Map<string, Row[]>();
+    for (const r of rows) {
+      const k = r[key] as string;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(r);
+    }
+    return m;
+  };
+  const campsBy = group(snap.campaigns, "ad_account_id");
+  const setsBy = group(snap.adsets, "campaign_id");
+  const adsBy = group(snap.ads, "ad_set_id");
+  const dailyBy = group(snap.daily, "campaign_id");
+  const clientBy = new Map(snap.clients.map((c) => [c.id as string, c]));
+  const byName = (x: Row, y: Row) => String(x.name).localeCompare(String(y.name));
 
-  // Clientes desativados não são enviados a nenhum destino
-  const inactive = new Set((clients ?? []).filter((c) => !c.active).map((c) => c.id));
-  // Contas desativadas e clientes inativos não são enviados
-  const tree = (accounts ?? []).filter((acc) => okAccounts.includes(acc.id)).map((acc) => ({
-    id: acc.id,
-    external_id: acc.external_id,
-    name: acc.name,
-    client_id: acc.client_id as string | null,
+  const tree = [...snap.accounts].sort(byName).map((acc) => ({
+    id: acc.id as string,
+    external_id: acc.external_id as string,
+    name: acc.name as string,
+    client_id: (acc.client_id as string | null) ?? null,
     platform: acc.platform as string,
-    currency: acc.currency,
-    client: acc.client_id ? (clientBy.get(acc.client_id) ? { id: acc.client_id, name: clientBy.get(acc.client_id)!.name } : null) : null,
-    campaigns: camps
-      .filter((c) => c.ad_account_id === acc.id)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((c) => ({
-        id: c.id,
-        external_id: c.external_id,
-        name: c.name,
-        status: c.status,
-        source: c.source ?? "api",
-        adsets: sets
-          .filter((s) => s.campaign_id === c.id)
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((s) => ({
-            id: s.id,
-            external_id: s.external_id,
-            name: s.name,
-            active: s.effective_status === "ACTIVE",
-            ads: ads.filter((a) => a.ad_set_id === s.id).map((a) => ({ id: a.id, external_id: a.external_id, name: a.name, active: !!a.active })),
-          })),
+    currency: acc.currency as string,
+    client: acc.client_id && clientBy.get(acc.client_id as string) ? { id: acc.client_id as string, name: clientBy.get(acc.client_id as string)!.name as string } : null,
+    campaigns: (campsBy.get(acc.id as string) ?? []).sort(byName).map((c) => ({
+      id: c.id as string,
+      external_id: c.external_id as string,
+      name: c.name as string,
+      status: c.status as NodeAccount["campaigns"][number]["status"],
+      source: ((c.source as string) ?? "api") as "api" | "manual",
+      adsets: (setsBy.get(c.id as string) ?? []).sort(byName).map((st) => ({
+        id: st.id as string,
+        external_id: st.external_id as string,
+        name: st.name as string,
+        active: st.effective_status === "ACTIVE",
+        ads: (adsBy.get(st.id as string) ?? []).map((a) => ({ id: a.id as string, external_id: a.external_id as string, name: a.name as string, active: !!a.active })),
       })),
+    })),
   }));
 
   return {
     tree,
-    campaigns: new Map(camps.map((c) => [c.id, c])),
-    adsets: new Map(sets.map((s) => [s.id, s])),
-    ads: new Map(ads.map((a) => [a.id, a])),
+    campaigns: new Map(snap.campaigns.map((c) => [c.id as string, c])),
+    adsets: new Map(snap.adsets.map((st) => [st.id as string, st])),
+    ads: new Map(snap.ads.map((a) => [a.id as string, a])),
     daily: dailyBy,
-    agencyName: agency?.name ?? "",
+    agencyName: snap.agency_name ?? "",
     range: { since, until },
   };
 }
 
 // ---------- Pacote enviado ao CRM ----------
 export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilters>) {
+  // conjuntos agrupados por campanha (uma vez, em vez de procurar na lista toda a cada campanha)
+  const setsByCampaign = new Map<string, Row[]>();
+  for (const st of data.adsets.values()) {
+    const k = st.campaign_id as string;
+    if (!setsByCampaign.has(k)) setsByCampaign.set(k, []);
+    setsByCampaign.get(k)!.push(st);
+  }
   const allDays = dateRange(data.range.since, data.range.until);
   const today = lastDays(1)[0];
   const f = normalizeFilters(filters);
@@ -280,7 +271,7 @@ export function buildAccountPayloads(data: AgencyTree, filters: Partial<DestFilt
       });
 
       const cm = c.metrics_30d as Metrics;
-      const fullAdsets = [...data.adsets.values()].filter((s) => s.campaign_id === c.id);
+      const fullAdsets = setsByCampaign.get(c.id) ?? [];
       const manual = c.source === "manual";
       const manualResults = days.reduce((t, d) => t + Number(d.conversions), 0);
       const result = manual
