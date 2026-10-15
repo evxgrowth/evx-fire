@@ -4,7 +4,18 @@
 >
 > **Meta de capacidade:** **20 clientes com 2.000 campanhas ativas** (e ~8.000 inativas), usando **menos da metade** do plano atual do Supabase.
 >
-> **Status:** PLANO em 5 fases. Nada foi alterado ainda. Cada fase começa só com aprovação.
+> **Status (15/10/2026):** as 5 fases foram executadas e publicadas. Resultados medidos em produção:
+>
+> | Medida | Antes | Depois |
+> |---|---|---|
+> | Requisições ao banco por ciclo de 30 min (sem mudanças) | 29 | 8 |
+> | Linhas regravadas por ciclo (sem mudanças) | 668 | 0 |
+> | Requisições ao abrir o painel (1ª vez / seguintes) | ~14 (com páginas de 1.000 linhas) | 3 / 1 (dados em cache até a próxima mudança) |
+> | Pacote do CRM (contrato v1) | — | idêntico byte a byte |
+> | API v1 repetida sem mudanças | consulta completa | 1 consulta (chave) e resposta 304 sem corpo |
+>
+> **O que mudou em relação ao plano original:** na Fase 3, as telas recebem os dados numa chamada só (`gestor_data`, formato compacto, aberto no navegador) e ficam em cache no servidor, limpo por evento. As RPCs por página com filtros no banco (`dashboard_data`, `list_campaigns`...) ficaram para quando a carga real se aproximar de 2.000 campanhas ativas. O limite de frequência da API v1 foi substituído pelo cache + 304 (repetição não custa leitura). Pendentes opcionais: laboratório de carga com 2.000 campanhas, limpeza de índices sem uso, gzip combinado com o CRM.
+> Tela de acompanhamento: **Super Admin → Saúde do sistema**.
 
 ---
 

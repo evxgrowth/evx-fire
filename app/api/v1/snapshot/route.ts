@@ -2,7 +2,8 @@ import { createHash } from "crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { buildAccountPayloads, loadAgencyTree, PAYLOAD_VERSION } from "@/lib/fire/snapshot";
-import { lastDays } from "@/lib/repo";
+import { unstable_cache } from "next/cache";
+import { agencyTag, lastDays } from "@/lib/repo";
 
 export const maxDuration = 60;
 
@@ -12,6 +13,8 @@ export const maxDuration = 60;
  * GET /api/v1/snapshot?ad_account=act_123 → só uma conta
  * GET /api/v1/snapshot?since=2025-10-01&until=2026-09-27 → histórico diário nesse intervalo (máx. 400 dias; padrão: 90 dias)
  * Cabeçalho: Authorization: Bearer <chave de API do destino>
+ * Resposta com ETag: mandando If-None-Match com o mesmo valor, volta 304 (sem corpo) se nada mudou.
+ * O pacote fica em cache no servidor até a próxima mudança nos dados da agência: consultas repetidas não vão ao banco.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -41,10 +44,22 @@ async function handle(req: NextRequest) {
   if (since > until) return NextResponse.json({ error: "invalid_range", message: "since deve ser anterior a until." }, { status: 400 });
   if ((Date.parse(until) - Date.parse(since)) / 864e5 > 400) return NextResponse.json({ error: "range_too_large", message: "Intervalo máximo: 400 dias." }, { status: 400 });
 
-  const tree = await loadAgencyTree(db, dest.agency_id, { since, until: until > today ? today : until });
-  let accounts = buildAccountPayloads(tree, dest.filters);
+  const end = until > today ? today : until;
+  const snap = await unstable_cache(
+    async () => {
+      const tree = await loadAgencyTree(db, dest.agency_id, { since, until: end });
+      return { accounts: buildAccountPayloads(tree, dest.filters), range: tree.range };
+    },
+    ["v1-snapshot", dest.id, since, end, JSON.stringify(dest.filters ?? null)],
+    { tags: [agencyTag(dest.agency_id)], revalidate: 3600 },
+  )();
+  let accounts = snap.accounts;
   const only = req.nextUrl.searchParams.get("ad_account");
   if (only) accounts = accounts.filter((a) => a.ad_account.external_id === only || a.ad_account.id === only);
+
+  // Impressão digital do conteúdo (sem a hora do envio): igual à do CRM → 304, nada trafega
+  const etag = `"${createHash("sha1").update(JSON.stringify([dest.id, dest.name, agency?.name ?? "", snap.range, accounts])).digest("base64url")}"`;
+  if (req.headers.get("if-none-match") === etag) return new NextResponse(null, { status: 304, headers: { ETag: etag } });
 
   const d30 = lastDays(30);
   return NextResponse.json({
@@ -54,7 +69,7 @@ async function handle(req: NextRequest) {
     source: "evx-fire",
     destination: { id: dest.id, name: dest.name },
     agency: { id: dest.agency_id, name: agency?.name ?? "" },
-    period: { since: tree.range.since, until: tree.range.until, timezone: "America/Sao_Paulo", last_30d: { since: d30[0], until: d30[d30.length - 1] } },
+    period: { since: snap.range.since, until: snap.range.until, timezone: "America/Sao_Paulo", last_30d: { since: d30[0], until: d30[d30.length - 1] } },
     data: { accounts },
-  });
+  }, { headers: { ETag: etag } });
 }

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import {
+  Activity,
   Building2,
   Crown,
   Images,
@@ -49,6 +50,7 @@ const NAV: Record<"gestor" | "admin", { section: string; items: Item[] }[]> = {
       items: [
         { href: "/admin", label: "Visão geral", icon: Crown },
         { href: "/admin/gestores", label: "Gestores", icon: Users },
+        { href: "/admin/saude", label: "Saúde do sistema", icon: Activity },
       ],
     },
   ],
