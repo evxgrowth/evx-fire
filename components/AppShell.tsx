@@ -7,6 +7,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import {
   Activity,
+  ClipboardCheck,
+  ScrollText,
   Building2,
   Crown,
   Images,
@@ -51,6 +53,8 @@ const NAV: Record<"gestor" | "admin", { section: string; items: Item[] }[]> = {
         { href: "/admin", label: "Visão geral", icon: Crown },
         { href: "/admin/gestores", label: "Gestores", icon: Users },
         { href: "/admin/saude", label: "Saúde do sistema", icon: Activity },
+        { href: "/admin/changelog", label: "Changelog", icon: ScrollText },
+        { href: "/admin/testes", label: "Checklist de testes", icon: ClipboardCheck },
       ],
     },
   ],
