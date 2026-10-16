@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 import ReportView from "@/components/report/ReportView";
 import { defaultFilters } from "@/lib/data";
 import { decodeFilters } from "@/lib/reportFilters";
-import { loadAgencyData } from "@/lib/repo";
+import { toClients } from "@/lib/packed";
+import { loadBase, loadView } from "@/lib/repo";
+import { REPORT_ROWS, resolveView, stripRevenue, type DashboardData } from "@/lib/views";
 import { createAdminClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,13 +24,18 @@ export default async function ShareReportPage({ params, searchParams }: { params
   const client = (Array.isArray(link?.clients) ? link?.clients[0] : link?.clients) as { name: string; active: boolean } | null;
   if (!link || !link.active || agency?.status === "suspended" || client?.active === false) notFound();
 
-  const data = await loadAgencyData(link.agency_id, link.client_id);
   const filters = { ...(decodeFilters(f) ?? defaultFilters), clients: [link.client_id] };
+  // Dados prontos do servidor; receita e criativos nem saem daqui se o link não mostrar
+  const [base, view] = await Promise.all([
+    loadBase(link.agency_id, link.client_id),
+    loadView(link.agency_id, link.client_id, resolveView({ view: "report", filters, top: link.show_creatives ? 9 : 0, limit: REPORT_ROWS })) as Promise<DashboardData | null>,
+  ]);
+  const data = view && !link.show_revenue ? stripRevenue(view) : view;
 
   return (
     <ReportView
-      campaigns={data.campaigns}
-      clients={data.clients}
+      data={data}
+      clients={toClients(base.clients)}
       filters={filters}
       agencyName={agency?.name ?? ""}
       defaultTitle={client?.name}

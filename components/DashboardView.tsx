@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import Link from "next/link";
 import { Banknote, Eye, MousePointerClick, Percent, ShoppingCart, Target, TrendingUp, Users } from "lucide-react";
 import { FileDown } from "lucide-react";
-import { dailySeries, filterCampaigns, previousTotals, topCreatives, totalsOf, type Filters } from "@/lib/data";
-import { useData } from "./DataProvider";
+import type { Filters } from "@/lib/data";
+import { derive, type DashboardData } from "@/lib/views";
 import { useFilters } from "./useFilters";
+import { useView } from "./useView";
 import { periodLabel } from "@/lib/period";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
 import KpiCard, { type KpiProps } from "./KpiCard";
@@ -14,6 +15,19 @@ import { Funnel, Legend, PlatformDonut, RevenueChart, SERIES, SpendChart } from 
 import CampaignTable from "./CampaignTable";
 import CreativeCard from "./CreativeCard";
 import { Panel } from "./ui";
+
+/** Esqueleto enquanto os primeiros dados chegam. */
+function Loading() {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {Array.from({ length: 8 }, (_, i) => (
+        <div key={i} className="glass h-[118px] animate-pulse" />
+      ))}
+    </div>
+  );
+}
+
+const TABLE_ROWS = 50;
 
 /**
  * Painel principal. Usado tanto pelo gestor quanto pelo link compartilhado
@@ -33,33 +47,16 @@ export default function DashboardView({
   hideRevenue?: boolean;
   hideCreatives?: boolean;
 }) {
-  const { campaigns: all } = useData();
   const [saved, setFilters] = useFilters("dashboard");
   // No link do cliente, o cliente vem fixo
   const filters: Filters = fixedClientId ? { ...saved, clients: [fixedClientId] } : saved;
+  // O servidor calcula tudo (indicadores, comparação, gráfico, tabela e destaques) e manda só o resultado
+  const { data, loading, error } = useView<DashboardData>({ view: "dashboard", filters, top: hideCreatives ? 0 : 4, limit: TABLE_ROWS });
 
-  const data = useMemo(() => {
-    const list = filterCampaigns(all, filters);
-    const totals = totalsOf(list);
-    const prev = previousTotals(all, filters);
-    const series = dailySeries(list);
-    const meta = list.filter((c) => c.platform === "meta");
-    const google = list.filter((c) => c.platform === "google");
-    return {
-      list,
-      totals,
-      prev,
-      series,
-      metaSpend: totalsOf(meta).spend,
-      googleSpend: totalsOf(google).spend,
-      creatives: topCreatives(list, 4),
-      tableList: list.filter((c) => c.status === "active" || c.daily.some((d) => d.spend > 0)),
-      active: list.filter((c) => c.status === "active" || c.status === "learning").length,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, JSON.stringify(filters)]);
+  if (!data) return error ? <div className="glass p-8 text-center text-sm text-bad">{error}</div> : <Loading />;
 
-  const { totals: t, prev } = data;
+  const t = derive(data.totals);
+  const prev = data.prev ? derive(data.prev) : null;
   const delta = (k: keyof typeof t) => (prev && prev[k] ? ((t[k] - prev[k]) / prev[k]) * 100 : null);
   const s = data.series;
 
@@ -81,14 +78,14 @@ export default function DashboardView({
   ];
 
   return (
-    <div className="space-y-5">
+    <div className={`space-y-5 transition-opacity ${loading ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <FilterBar filters={filters} onChange={setFilters} lockClient={!!fixedClientId} />
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash-400">
           <span>
-            <b className="text-white">{data.active}</b> campanhas rodando
+            <b className="text-white">{data.running}</b> campanhas rodando
           </span>
           <span>
             CPC <b className="text-white">{fmtMoney(t.cpc)}</b>
@@ -111,7 +108,7 @@ export default function DashboardView({
         </div>
       </div>
 
-      {!data.list.length && (
+      {!data.count && (
         <div className="glass p-8 text-center text-sm text-ash-400">Nenhuma campanha com esses filtros.</div>
       )}
 
@@ -148,7 +145,17 @@ export default function DashboardView({
       </div>
 
       <Panel title="Campanhas" subtitle="Com veiculação no período, ordenadas por investimento" delay={0.4}>
-        <CampaignTable campaigns={data.tableList} linkBase={campaignLinkBase} />
+        <CampaignTable campaigns={data.table} linkBase={campaignLinkBase} />
+        {data.tableTotal > data.table.length && (
+          <p className="mt-3 text-center text-xs text-ash-400">
+            Mostrando as {data.table.length} de maior investimento, de {data.tableTotal}.{" "}
+            {campaignLinkBase && (
+              <Link href={campaignLinkBase} className="text-fire-300 hover:underline">
+                Ver todas em Campanhas
+              </Link>
+            )}
+          </p>
+        )}
       </Panel>
 
       {!hideCreatives && (

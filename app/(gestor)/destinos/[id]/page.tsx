@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { requireManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { loadAgencyTree } from "@/lib/fire/snapshot";
+import { loadAgencyNames } from "@/lib/fire/snapshot";
 import { normalizeFilters, type NodeAccount } from "@/lib/fire/filters";
 import { PageHeader } from "@/components/ui";
 import DestinoEditor, { type DeliveryRow } from "./DestinoEditor";
@@ -15,8 +15,8 @@ export default async function DestinoPage({ params }: { params: Promise<{ id: st
   const { data: dest } = await db.from("destinations").select("*").eq("id", id).eq("agency_id", me.agencyId).maybeSingle();
   if (!dest) notFound();
 
-  const [{ tree }, { data: deliveries }] = await Promise.all([
-    loadAgencyTree(db, me.agencyId, { withDaily: false }), // a prévia só precisa dos nomes
+  const [tree, { data: deliveries }] = await Promise.all([
+    loadAgencyNames(db, me.agencyId), // a prévia só precisa dos nomes
     db.from("deliveries").select("id, event, ad_account, items, status, ok, duration_ms, error, created_at").eq("destination_id", id).order("created_at", { ascending: false }).limit(25),
   ]);
 

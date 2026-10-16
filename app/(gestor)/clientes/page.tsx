@@ -6,10 +6,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import { Archive, ArchiveRestore, Loader2, Pencil, Plus, Power, Search, Share2, X } from "lucide-react";
 import { useData } from "@/components/DataProvider";
+import { useView } from "@/components/useView";
 import { useDebounced, usePref } from "@/components/Prefs";
 import { GoogleAdsIcon, MetaIcon } from "@/components/PlatformIcon";
 import { PageHeader, Pill } from "@/components/ui";
-import { filterCampaigns, totalsOf } from "@/lib/data";
+import { derive, type ClientsData, type ClientStats } from "@/lib/views";
 import { fmtMoney, fmtNum, fmtX } from "@/lib/format";
 import type { Client } from "@/lib/types";
 import { useBatchedToggle } from "@/components/useBatchedToggle";
@@ -61,7 +62,10 @@ function ClientModal({ client, onClose }: { client: Client | "new"; onClose: () 
 }
 
 export default function ClientesPage() {
-  const { clients, campaigns, demo } = useData();
+  const { clients, demo } = useData();
+  // Números de cada cliente (este mês) somados no servidor
+  const { data: view } = useView<ClientsData>({ view: "clients" });
+  const empty: ClientStats = { spend: 0, conversions: 0, revenue: 0, running: 0, manual: 0, count: 0 };
   const [prefs, setPrefs] = usePref("clients.filters", { kind: "all" as "all" | "api" | "manual", showInactive: false });
   const [search, setSearch] = useState("");
   const q = useDebounced(search, 300);
@@ -74,15 +78,14 @@ export default function ClientesPage() {
     return clients
       .filter((c) => isActive(c) !== prefs.showInactive)
       .map((c) => {
-        const list = filterCampaigns(campaigns, { clientId: c.id });
+        const st = view?.stats[c.id] ?? empty;
         const connected = !!(c.metaAccountId || c.googleCustomerId);
-        const manual = list.filter((x) => x.source === "manual").length;
-        return { c, list, connected, manual };
+        return { c, st, connected, manual: st.manual };
       })
       .filter((r) => prefs.kind === "all" || (prefs.kind === "api" ? r.connected : r.manual > 0 || !r.connected))
       .filter((r) => !q.trim() || norm(r.c.name + " " + r.c.segment).includes(norm(q.trim())));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clients, campaigns, prefs.kind, prefs.showInactive, q, valueOf]);
+  }, [clients, view, prefs.kind, prefs.showInactive, q, valueOf]);
 
   return (
     <>
@@ -150,9 +153,9 @@ export default function ClientesPage() {
       {saving && <p className="mb-3 text-[11px] text-ash-500">Salvando alterações…</p>}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         <AnimatePresence mode="popLayout">
-        {rows.map(({ c, list, manual }, i) => {
-          const t = totalsOf(list);
-          const running = list.filter((x) => x.status === "active" || x.status === "learning").length;
+        {rows.map(({ c, st, manual }, i) => {
+          const t = derive({ ...st, impressions: 0, clicks: 0 });
+          const running = st.running;
           return (
             <motion.div
               key={c.id}

@@ -1,8 +1,8 @@
 import "server-only";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { createAdminClient } from "./supabase/server";
-import { HISTORY_DAYS, unpack, type Packed } from "./packed";
-import type { Campaign, Client } from "./types";
+import type { Packed } from "./packed";
+import { normalizeView, type ResolvedView, type ViewData } from "./views";
 
 const DAYS = 30;
 
@@ -18,14 +18,6 @@ export function lastDays(n = DAYS) {
   });
 }
 
-export interface AgencyData {
-  campaigns: Campaign[];
-  clients: Client[];
-  lastSync: string | null;
-  /** a agência tem alguma conta (conectada ou manual)? */
-  hasAccounts: boolean;
-}
-
 /** Etiqueta do cache da agência: limpa quando algo muda (sincronização ou ação do gestor). */
 export const agencyTag = (agencyId: string) => `agency:${agencyId}`;
 
@@ -34,27 +26,48 @@ export function invalidateAgency(agencyId: string) {
   revalidateTag(agencyTag(agencyId));
 }
 
-/**
- * Dados das telas da agência (ou só de um cliente, no link compartilhado), no formato compacto.
- * Uma chamada ao banco (função gestor_data), guardada em cache no servidor até algo mudar:
- * abrir e navegar pelas telas entre uma sincronização e outra não consulta o banco.
- * `agencyId` sempre vem do login verificado ou do link validado; nunca do navegador.
- */
-export function loadPacked(agencyId: string, onlyClientId?: string): Promise<Packed> {
-  const since = lastDays(HISTORY_DAYS)[0];
+/** Links de cliente mudaram (link, cliente ativo/inativo ou agência suspensa): revalida os links em cache. */
+export function invalidateShareLinks() {
+  revalidateTag("share-links");
+}
+
+// ---------------- Telas em escala: base leve + visões prontas ----------------
+
+export interface BaseData {
+  has_accounts: boolean;
+  last_sync: string | null;
+  clients: Packed["clients"];
+  /** muda sempre que os dados da agência mudam (o navegador usa para saber que precisa buscar de novo) */
+  v: number;
+}
+
+/** Base do layout: só clientes, última sincronização e se há contas. Em cache até algo mudar. */
+export function loadBase(agencyId: string, onlyClientId?: string): Promise<BaseData> {
   return unstable_cache(
     async () => {
-      const { data, error } = await createAdminClient().rpc("gestor_data", { p_agency: agencyId, p_client: onlyClientId ?? null, p_since: since });
+      const { data, error } = await createAdminClient().rpc("gestor_base", { p_agency: agencyId, p_client: onlyClientId ?? null });
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Agência indisponível");
-      return data as Packed;
+      return { ...(data as Omit<BaseData, "v">), v: Date.now() };
     },
-    ["gestor-data-v1", agencyId, onlyClientId ?? "", since],
+    ["gestor-base-v1", agencyId, onlyClientId ?? ""],
     { tags: [agencyTag(agencyId)], revalidate: 3600 },
   )();
 }
 
-/** Mesmos dados, já abertos nas listas que as telas usam (relatórios em PDF). */
-export async function loadAgencyData(agencyId: string, onlyClientId?: string): Promise<AgencyData> {
-  return unpack(await loadPacked(agencyId, onlyClientId));
+/**
+ * Dados prontos de uma tela (função fire_view no banco), em cache por agência + pedido.
+ * O pedido já vem com as datas resolvidas; filtros diferentes = entradas diferentes no cache.
+ */
+export async function loadView(agencyId: string, onlyClientId: string | null, req: ResolvedView): Promise<ViewData> {
+  const raw = await unstable_cache(
+    async () => {
+      const { data, error } = await createAdminClient().rpc("fire_view", { p_agency: agencyId, p_client: onlyClientId, a: req });
+      if (error) throw new Error(error.message);
+      return data as unknown;
+    },
+    ["fire-view-v1", agencyId, onlyClientId ?? "", JSON.stringify(req)],
+    { tags: [agencyTag(agencyId)], revalidate: 3600 },
+  )();
+  return normalizeView(req.view, raw);
 }

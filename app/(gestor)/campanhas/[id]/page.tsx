@@ -1,4 +1,7 @@
+import { notFound } from "next/navigation";
 import { requireManager } from "@/lib/auth";
+import { loadView } from "@/lib/repo";
+import { resolveView, type CampaignData } from "@/lib/views";
 import { createClient } from "@/lib/supabase/server";
 import { audienceOf } from "@/lib/fire/snapshot";
 import { GOAL_LABELS } from "@/lib/meta/results";
@@ -13,6 +16,9 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
   if (!UUID.test(id)) return <CampaignDetail id={id} adsets={[]} />; // dados de demonstração
 
   const db = await createClient();
+  // Números e criativos da campanha: prontos do servidor (em cache até algo mudar)
+  const initial = (await loadView(me.agencyId, null, resolveView({ view: "campaign", id }))) as CampaignData | null;
+  if (!initial) notFound();
   const [{ data: camp }, { data: sets }] = await Promise.all([
     db.from("campaigns").select("*, ad_accounts(client_id)").eq("id", id).eq("agency_id", me.agencyId).maybeSingle(),
     db.from("ad_sets").select("*").eq("campaign_id", id).order("name"),
@@ -27,7 +33,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
     audience: audienceOf(s.targeting, s.audience_notes)?.summary ?? null,
   }));
 
-  if (camp?.source !== "manual") return <CampaignDetail id={id} adsets={adsets} />;
+  if (camp?.source !== "manual") return <CampaignDetail id={id} adsets={adsets} initial={initial} />;
 
   const [{ data: entries }, { data: ads }, { data: clients }] = await Promise.all([
     db.from("manual_entries").select("*").eq("campaign_id", id).order("start_date", { ascending: false }),
@@ -40,6 +46,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
     <CampaignDetail
       id={id}
       adsets={adsets}
+      initial={initial}
       manualPanel={
         <ManualPanel
           agencyId={me.agencyId}

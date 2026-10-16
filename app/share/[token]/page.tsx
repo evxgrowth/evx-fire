@@ -5,7 +5,7 @@ import DataProvider from "@/components/DataProvider";
 import FlameLogo from "@/components/FlameLogo";
 import { LiveBadge } from "@/components/ui";
 import { createAdminClient } from "@/lib/supabase/server";
-import { loadPacked } from "@/lib/repo";
+import { loadBase } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   }
 
   await db.from("share_links").update({ views: link.views + 1 }).eq("id", link.id);
-  const data = await loadPacked(link.agency_id, link.client_id);
+  const data = await loadBase(link.agency_id, link.client_id);
 
   return (
     <div className="min-h-screen">
@@ -57,7 +57,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
             Resultados das suas campanhas, atualizados automaticamente{agency?.name ? ` · gestão ${agency.name}` : ""}.
           </p>
         </div>
-        <DataProvider packed={data} lastSync={data.last_sync}>
+        <DataProvider baseClients={data.clients} lastSync={data.last_sync} version={data.v} shareToken={token}>
           <DashboardView fixedClientId={link.client_id} hideRevenue={!link.show_revenue} hideCreatives={!link.show_creatives} reportHref={`/share/${token}/relatorio`} />
         </DataProvider>
         <p className="mt-10 text-center text-xs text-ash-500">

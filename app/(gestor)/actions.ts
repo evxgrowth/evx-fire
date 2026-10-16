@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { requireManager } from "@/lib/auth";
-import { invalidateAgency } from "@/lib/repo";
+import { invalidateAgency, invalidateShareLinks } from "@/lib/repo";
 import { createClient } from "@/lib/supabase/server";
 
 // Todas as ações usam a sessão do gestor: o banco só deixa mexer nos dados da agência dele.
@@ -11,6 +11,8 @@ import { createClient } from "@/lib/supabase/server";
 /** Os dados da agência mudaram: limpa só o cache dela (as telas buscam de novo uma vez). */
 function refresh(agencyId: string) {
   invalidateAgency(agencyId);
+  // cliente ativado/desativado ou apagado muda quais links de cliente continuam valendo
+  invalidateShareLinks();
 }
 
 export async function createClientRecord(name: string, segment = "", notes = "") {
@@ -111,6 +113,7 @@ export async function createShareLink(clientId: string, showRevenue: boolean, sh
     show_creatives: showCreatives,
   });
   revalidatePath("/compartilhar");
+  invalidateShareLinks();
 }
 
 export async function updateShareLink(id: string, patch: { active?: boolean; show_revenue?: boolean; show_creatives?: boolean }) {
@@ -118,6 +121,7 @@ export async function updateShareLink(id: string, patch: { active?: boolean; sho
   const db = await createClient();
   await db.from("share_links").update(patch).eq("id", id);
   revalidatePath("/compartilhar");
+  invalidateShareLinks();
 }
 
 export async function deleteShareLink(id: string) {
@@ -125,4 +129,5 @@ export async function deleteShareLink(id: string) {
   const db = await createClient();
   await db.from("share_links").delete().eq("id", id);
   revalidatePath("/compartilhar");
+  invalidateShareLinks();
 }

@@ -1,6 +1,7 @@
-// Formato compacto dos dados das telas (vem pronto do banco pela função gestor_data).
-// Viaja assim do banco ao servidor e do servidor ao navegador; só é "aberto" no fim,
-// para as telas continuarem recebendo as mesmas listas de sempre (Campaign[], Client[]).
+// Formato compacto dos dados (função gestor_data no banco).
+// As telas não usam mais a base inteira (veja lib/views.ts); este formato continua servindo
+// para o anúncio (toCreative) e para o script de conferência scripts/verify-views.mts,
+// que compara o cálculo do banco com o cálculo antigo feito sobre a base inteira.
 
 import type { Campaign, Client, Creative, DailyPoint } from "./types";
 
@@ -40,6 +41,42 @@ export interface Packed {
 
 export const HISTORY_DAYS = 90;
 
+/** Clientes no formato compacto → formato das telas. */
+export const toClients = (rows: Packed["clients"]): Client[] =>
+  rows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    segment: c.segment,
+    active: c.active,
+    notes: c.notes ?? undefined,
+    metaAccountId: c.meta || undefined,
+    googleCustomerId: c.google || undefined,
+  }));
+
+export type PackedCreative = Packed["creatives"][number];
+
+/** Anúncio no formato compacto → formato das telas. */
+export function toCreative(c: PackedCreative): Creative {
+  return {
+    id: c.id,
+    name: c.n,
+    format: c.f,
+    headline: c.h || c.n,
+    body: c.b ?? "",
+    hue: hue(c.id),
+    imageUrl: c.img ?? c.m?.find((m) => m.type === "image")?.url ?? undefined,
+    videoUrl: c.vid ?? c.m?.find((m) => m.type === "video")?.url ?? undefined,
+    media: c.m ?? [],
+    adSetId: c.s ?? undefined,
+    cta: c.cta ?? undefined,
+    impressions: Number(c.i),
+    clicks: Number(c.k),
+    spend: Number(c.sp),
+    conversions: Number(c.cv),
+    active: c.a,
+  };
+}
+
 function hue(id: string) {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360;
@@ -72,24 +109,7 @@ export function unpack(p: Packed): { campaigns: Campaign[]; clients: Client[]; l
   const crBy = new Map<string, Creative[]>();
   for (const c of p.creatives) {
     if (!crBy.has(c.c)) crBy.set(c.c, []);
-    crBy.get(c.c)!.push({
-      id: c.id,
-      name: c.n,
-      format: c.f,
-      headline: c.h || c.n,
-      body: c.b ?? "",
-      hue: hue(c.id),
-      imageUrl: c.img ?? c.m?.find((m) => m.type === "image")?.url ?? undefined,
-      videoUrl: c.vid ?? c.m?.find((m) => m.type === "video")?.url ?? undefined,
-      media: c.m ?? [],
-      adSetId: c.s ?? undefined,
-      cta: c.cta ?? undefined,
-      impressions: Number(c.i),
-      clicks: Number(c.k),
-      spend: Number(c.sp),
-      conversions: Number(c.cv),
-      active: c.a,
-    });
+    crBy.get(c.c)!.push(toCreative(c));
   }
 
   const campaigns: Campaign[] = p.campaigns.map(([id, clientId, platform, source, name, objective, status, budget, reach]) => {

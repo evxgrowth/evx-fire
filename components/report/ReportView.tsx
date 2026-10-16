@@ -2,10 +2,11 @@
 
 import { useMemo } from "react";
 import { ArrowLeft, Printer } from "lucide-react";
-import { campaignTotals, dailySeries, filterCampaigns, topCreatives, totalsOf, type Filters } from "@/lib/data";
+import type { Filters } from "@/lib/data";
+import { derive, REPORT_ROWS, type DashboardData } from "@/lib/views";
 import { fmtMoney, fmtNum, fmtNumShort, fmtPct, fmtX } from "@/lib/format";
 import { periodLabel, periodRange } from "@/lib/period";
-import type { Campaign, Client } from "@/lib/types";
+import type { Client } from "@/lib/types";
 import { Legend, PlatformDonut, RevenueChart, SERIES, SpendChart } from "../charts";
 import { CreativeThumb } from "../CreativeCard";
 import { Flame } from "../FlameLogo";
@@ -50,7 +51,7 @@ function H({ children, sub }: { children: React.ReactNode; sub?: string }) {
 }
 
 export default function ReportView({
-  campaigns,
+  data,
   clients,
   filters,
   agencyName,
@@ -59,7 +60,8 @@ export default function ReportView({
   hideCreatives = false,
   backHref,
 }: {
-  campaigns: Campaign[];
+  /** dados prontos do servidor (função fire_view, visão "report") */
+  data: DashboardData | null;
   clients: Client[];
   filters: Filters;
   agencyName: string;
@@ -69,28 +71,22 @@ export default function ReportView({
   backHref: string;
 }) {
   const d = useMemo(() => {
-    const list = filterCampaigns(campaigns, filters);
-    const t = totalsOf(list);
-    const series = dailySeries(list);
-    const rows = list
-      .map((c) => ({ c, t: campaignTotals(c) }))
-      .filter((r) => r.t.spend > 0 || r.c.status === "active")
-      .sort((a, b) => b.t.spend - a.t.spend);
-    const best = [...rows].filter((r) => r.t.conversions > 0).sort((a, b) => a.t.cpa - b.t.cpa)[0];
-    const most = [...rows].sort((a, b) => b.t.conversions - a.t.conversions)[0];
+    const v = data;
+    const row = (r: NonNullable<DashboardData["best"]>) => ({ c: r, t: derive(r) });
     return {
-      list,
-      t,
-      series,
-      rows,
-      best,
-      most,
-      meta: totalsOf(list.filter((c) => c.platform === "meta")).spend,
-      google: totalsOf(list.filter((c) => c.platform === "google")).spend,
-      creatives: topCreatives(list, 9),
-      active: list.filter((c) => c.status === "active").length,
+      count: v?.count ?? 0,
+      t: derive(v?.totals ?? { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, reach: 0 }),
+      series: v?.series ?? [],
+      rows: (v?.table ?? []).map(row),
+      rowsTotal: v?.tableTotal ?? 0,
+      best: v?.best ? row(v.best) : undefined,
+      most: v?.most ? row(v.most) : undefined,
+      meta: v?.metaSpend ?? 0,
+      google: v?.googleSpend ?? 0,
+      creatives: v?.creatives ?? [],
+      active: v?.activeOnly ?? 0,
     };
-  }, [campaigns, filters]);
+  }, [data]);
 
   // Sem receita no período (ex.: campanhas de leads): receita e ROAS não aparecem
   const hideRevenue = hideRevenueProp || d.t.revenue <= 0;
@@ -208,7 +204,7 @@ export default function ReportView({
             <H>Destaques do período</H>
             <ul className="space-y-3 text-[11px] leading-relaxed text-ash-200">
               <li>
-                <b className="text-white">{d.active}</b> campanha(s) ativas de <b className="text-white">{d.list.length}</b> no relatório.
+                <b className="text-white">{d.active}</b> campanha(s) ativas de <b className="text-white">{d.count}</b> no relatório.
               </li>
               {d.most && d.most.t.conversions > 0 && (
                 <li>
@@ -258,7 +254,7 @@ export default function ReportView({
         </div>
 
         <div className="mt-5">
-          <H sub={`${d.rows.length} campanha(s) com veiculação no período, por investimento`}>Campanhas</H>
+          <H sub={`${d.rowsTotal} campanha(s) com veiculação no período, por investimento`}>Campanhas</H>
           <table className="w-full text-[10px] [&_td]:px-2 [&_th]:px-2">
             <thead>
               <tr className="border-b border-white/10 text-left text-[8.5px] uppercase tracking-wider text-ash-400">
@@ -272,7 +268,7 @@ export default function ReportView({
               </tr>
             </thead>
             <tbody>
-              {d.rows.slice(0, 22).map(({ c, t: ct }) => (
+              {d.rows.slice(0, REPORT_ROWS).map(({ c, t: ct }) => (
                 <tr key={c.id} className="border-b border-white/[0.05]">
                   <td className="py-1.5">
                     <div className="flex items-center gap-1.5">
@@ -294,7 +290,7 @@ export default function ReportView({
               ))}
             </tbody>
           </table>
-          {d.rows.length > 22 && <p className="mt-2 text-[9px] text-ash-500">+ {d.rows.length - 22} campanha(s) com menor investimento.</p>}
+          {d.rowsTotal > REPORT_ROWS && <p className="mt-2 text-[9px] text-ash-500">+ {d.rowsTotal - REPORT_ROWS} campanha(s) com menor investimento.</p>}
         </div>
 
         {total === 2 && <Notes />}

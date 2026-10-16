@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
-import type { Campaign } from "@/lib/types";
-import { campaignTotals } from "@/lib/data";
+import { derive, type CampRow } from "@/lib/views";
 import { useData } from "./DataProvider";
 import { fmtMoney, fmtNum, fmtPct, fmtX } from "@/lib/format";
 import PlatformBadge from "./PlatformIcon";
 import StatusLed from "./StatusLed";
 import { MeterBar } from "./charts";
 
-export default function CampaignTable({ campaigns, linkBase }: { campaigns: Campaign[]; linkBase?: string }) {
+/** Tabela de campanhas. Recebe as linhas já somadas no período e ordenadas pelo servidor. */
+export default function CampaignTable({ campaigns, linkBase }: { campaigns: CampRow[]; linkBase?: string }) {
   const { clientById } = useData();
-  const rows = campaigns.map((c) => ({ c, t: campaignTotals(c) })).sort((a, b) => b.t.spend - a.t.spend);
+  const rows = campaigns.map((c) => ({ c, t: derive(c) }));
   const maxRoas = Math.max(...rows.map((r) => r.t.roas), 1);
 
   return (
@@ -45,7 +45,7 @@ export default function CampaignTable({ campaigns, linkBase }: { campaigns: Camp
                         {c.source === "manual" && <span className="shrink-0 rounded border border-white/15 px-1.5 py-px text-[9px] uppercase tracking-wider text-ash-300">Manual</span>}
                       </div>
                       <div className="text-[11px] text-ash-400">
-                        {clientById(c.clientId)?.name} · {c.objective}
+                        {c.clientId ? clientById(c.clientId)?.name : null} · {c.objective}
                       </div>
                     </div>
                   </div>
@@ -68,7 +68,7 @@ export default function CampaignTable({ campaigns, linkBase }: { campaigns: Camp
                 key={c.id}
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.04 }}
+                transition={{ delay: Math.min(i, 15) * 0.04 }}
                 className="group border-b border-white/[0.04] transition-colors hover:bg-fire-500/[0.05]"
               >
                 {inner}

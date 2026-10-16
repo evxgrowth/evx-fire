@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Search, X } from "lucide-react";
 import CampaignTable from "@/components/CampaignTable";
@@ -9,30 +9,23 @@ import { Panel, PageHeader } from "@/components/ui";
 import { useData } from "@/components/DataProvider";
 import { useDebounced } from "@/components/Prefs";
 import { useFilters } from "@/components/useFilters";
-import { filterCampaigns } from "@/lib/data";
+import { useView } from "@/components/useView";
+import type { CampaignsData } from "@/lib/views";
 const PAGE = 50;
 
-const norm = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
-
 export default function CampanhasPage() {
-  const { campaigns, demo } = useData();
+  const { demo } = useData();
   const [filters, setFilters] = useFilters("campaigns");
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const q = useDebounced(search, 300);
 
-  const list = useMemo(() => {
-    const base = filterCampaigns(campaigns, filters);
-    if (!q.trim()) return base;
-    const t = norm(q.trim());
-    return base.filter((c) => norm(c.name).includes(t) || c.id.includes(t) || (c.adsets ?? []).some((s) => norm(s.name).includes(t)) || c.creatives.some((cr) => norm(cr.name).includes(t)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaigns, JSON.stringify(filters), q]);
-  const active = list.filter((c) => c.status === "active").length;
+  // Filtro, busca e soma do período são feitos no servidor; chegam só as linhas mostradas
+  const filtersKey = JSON.stringify(filters);
+  useEffect(() => setLimit(PAGE), [filtersKey, q]);
+  const { data, loading, error } = useView<CampaignsData>({ view: "campaigns", filters, search: q.trim(), limit });
+  const rows = data?.rows ?? [];
+  const count = data?.count ?? 0;
 
   return (
     <>
@@ -59,14 +52,22 @@ export default function CampanhasPage() {
         </div>
       </div>
 
-      <Panel title={`${list.length} campanha(s)`} subtitle={`${active} ativa(s) · ordenadas por investimento no período`}>
-        {list.length ? (
+      <Panel
+        title={data ? `${count} campanha(s)` : "Campanhas"}
+        subtitle={data ? `${data.active} ativa(s) · ordenadas por investimento no período` : "Carregando…"}
+        className={loading && data ? "opacity-60 transition-opacity" : "transition-opacity"}
+      >
+        {error && !data ? (
+          <p className="py-10 text-center text-sm text-bad">{error}</p>
+        ) : !data ? (
+          <div className="h-40 animate-pulse rounded-xl bg-white/[0.03]" />
+        ) : rows.length ? (
           <>
-            <CampaignTable campaigns={list.slice(0, limit)} linkBase="/campanhas" />
-            {list.length > limit && (
+            <CampaignTable campaigns={rows} linkBase="/campanhas" />
+            {count > rows.length && (
               <div className="mt-4 text-center">
-                <button className="btn-ghost !py-2 !text-xs" onClick={() => setLimit((l) => l + PAGE)}>
-                  Mostrar mais ({list.length - limit} restantes)
+                <button className="btn-ghost !py-2 !text-xs" disabled={loading} onClick={() => setLimit((l) => l + PAGE)}>
+                  {loading ? "Carregando…" : `Mostrar mais (${count - rows.length} restantes)`}
                 </button>
               </div>
             )}

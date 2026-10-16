@@ -9,8 +9,9 @@ import StatusLed from "@/components/StatusLed";
 import CreativeCard from "@/components/CreativeCard";
 import { Legend, RevenueChart, SERIES, SpendChart } from "@/components/charts";
 import { Panel } from "@/components/ui";
-import { campaignTotals, dailySeries } from "@/lib/data";
 import { useData } from "@/components/DataProvider";
+import { useView } from "@/components/useView";
+import { derive, type CampaignData } from "@/lib/views";
 import { fmtMoney, fmtNum, fmtNumShort, fmtX } from "@/lib/format";
 
 export interface AdSetView {
@@ -22,12 +23,22 @@ export interface AdSetView {
   audience: string | null;
 }
 
-export default function CampaignDetail({ id, adsets, manualPanel }: { id: string; adsets: AdSetView[]; manualPanel?: React.ReactNode }) {
-  const { campaigns, clientById } = useData();
-  const c = campaigns.find((x) => x.id === id);
-  if (!c) notFound();
-  const t = campaignTotals(c);
-  const s = dailySeries([c]);
+/**
+ * Detalhe de uma campanha. `initial` vem pronto do servidor (dados reais);
+ * sem ele (demonstração), calcula com os dados de exemplo.
+ */
+export default function CampaignDetail({ id, adsets, manualPanel, initial }: { id: string; adsets: AdSetView[]; manualPanel?: React.ReactNode; initial?: CampaignData }) {
+  const { clientById } = useData();
+  const demo = useView<CampaignData>(initial ? null : { view: "campaign", id });
+  const data = initial ?? demo.data;
+  if (!data) {
+    if (demo.loading) return <div className="glass h-64 animate-pulse" />;
+    notFound();
+  }
+  const c = data.campaign;
+  const creatives = data.creatives;
+  const t = derive(data.totals);
+  const s = data.series;
   const color = SERIES[c.platform];
 
   return (
@@ -44,7 +55,7 @@ export default function CampaignDetail({ id, adsets, manualPanel }: { id: string
         <h1 className="mt-3 font-display text-2xl font-bold text-white md:text-3xl">{c.name}</h1>
         <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ash-400">
           <span>
-            Cliente: <b className="font-medium text-ash-200">{clientById(c.clientId)?.name ?? "Sem cliente"}</b>
+            Cliente: <b className="font-medium text-ash-200">{c.clientName ?? (c.clientId ? clientById(c.clientId)?.name : null) ?? "Sem cliente"}</b>
           </span>
           <span>
             Objetivo: <b className="font-medium text-ash-200">{c.objective}</b>
@@ -96,9 +107,9 @@ export default function CampaignDetail({ id, adsets, manualPanel }: { id: string
         </Panel>
       )}
 
-      <h3 className="mb-3 font-display text-[15px] font-semibold text-white">Criativos desta campanha ({c.creatives.length})</h3>
+      <h3 className="mb-3 font-display text-[15px] font-semibold text-white">Criativos desta campanha ({creatives.length})</h3>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {c.creatives.map((cr, i) => (
+        {creatives.map((cr, i) => (
           <CreativeCard key={cr.id} c={cr} index={i} />
         ))}
       </div>

@@ -1,41 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { Search } from "lucide-react";
 import CreativeCard from "@/components/CreativeCard";
 import FilterBar from "@/components/FilterBar";
 import { PageHeader } from "@/components/ui";
-import { useData } from "@/components/DataProvider";
 import { useDebounced, usePref } from "@/components/Prefs";
-import { filterCampaigns, topCreatives } from "@/lib/data";
 import { useFilters } from "@/components/useFilters";
+import { useView } from "@/components/useView";
+import type { CreativesData } from "@/lib/views";
 
 const PAGE = 40;
-const norm = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
 
 export default function CriativosPage() {
-  const { campaigns } = useData();
   const [filters, setFilters] = useFilters("creatives");
   const [prefs, setPrefs] = usePref("creatives.view", { state: "all" as "all" | "active" | "inactive" });
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const q = useDebounced(search, 300);
 
-  const creatives = useMemo(() => {
-    let list = topCreatives(filterCampaigns(campaigns, filters), 9999);
-    if (prefs.state !== "all") list = list.filter((c) => c.active === (prefs.state === "active"));
-    if (q.trim()) {
-      const t = norm(q.trim());
-      list = list.filter((c) => norm(`${c.name} ${c.headline} ${c.campaign.name}`).includes(t));
-    }
-    return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaigns, JSON.stringify(filters), prefs.state, q]);
+  // Filtro, busca e ordem no servidor; chegam só os criativos mostrados (40 por vez)
+  const filtersKey = JSON.stringify(filters);
+  useEffect(() => setLimit(PAGE), [filtersKey, prefs.state, q]);
+  const { data, loading, error } = useView<CreativesData>({ view: "creatives", filters, state: prefs.state, search: q.trim(), limit });
+  const creatives = data?.rows ?? [];
+  const count = data?.count ?? 0;
 
   return (
     <>
@@ -80,16 +70,24 @@ export default function CriativosPage() {
           <input className="input !py-2 !pl-9" placeholder="Buscar criativo ou campanha…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
-      {!creatives.length && <p className="py-16 text-center text-sm text-ash-400">Nenhum criativo com esses filtros.</p>}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {creatives.slice(0, limit).map((c, i) => (
+      {error && !data && <p className="py-16 text-center text-sm text-bad">{error}</p>}
+      {!data && !error && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {Array.from({ length: 8 }, (_, i) => (
+            <div key={i} className="glass aspect-[4/5] animate-pulse" />
+          ))}
+        </div>
+      )}
+      {data && !creatives.length && <p className="py-16 text-center text-sm text-ash-400">Nenhum criativo com esses filtros.</p>}
+      <div className={`grid grid-cols-1 gap-4 transition-opacity sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 ${loading && data ? "opacity-60" : ""}`}>
+        {creatives.map((c, i) => (
           <CreativeCard key={c.id} c={c} campaign={c.campaign} index={i % PAGE} />
         ))}
       </div>
-      {creatives.length > limit && (
+      {count > creatives.length && (
         <div className="mt-6 text-center">
-          <button className="btn-ghost !py-2 !text-xs" onClick={() => setLimit((l) => l + PAGE)}>
-            Mostrar mais ({creatives.length - limit} restantes)
+          <button className="btn-ghost !py-2 !text-xs" disabled={loading} onClick={() => setLimit((l) => l + PAGE)}>
+            {loading ? "Carregando…" : `Mostrar mais (${count - creatives.length} restantes)`}
           </button>
         </div>
       )}

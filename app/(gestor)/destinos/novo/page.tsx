@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { loadAgencyTree } from "@/lib/fire/snapshot";
+import { loadAgencyNames } from "@/lib/fire/snapshot";
 import { normalizeFilters, type NodeAccount } from "@/lib/fire/filters";
 import { PageHeader } from "@/components/ui";
 import DestinoEditor from "../[id]/DestinoEditor";
@@ -11,7 +11,7 @@ import DestinoEditor from "../[id]/DestinoEditor";
 export default async function NovoDestinoPage() {
   const me = await requireManager();
   const db = await createClient();
-  const { tree } = await loadAgencyTree(db, me.agencyId, { withDaily: false });
+  const tree = await loadAgencyNames(db, me.agencyId);
   const light: (NodeAccount & { client: string | null })[] = tree.map((a) => ({
     id: a.id,
     external_id: a.external_id,

@@ -8,3 +8,4 @@ next-env.d.ts
 supabase/*.local.sql
 .next-check
 supabase/.temp
+lib/fire/_old-snapshot.ts

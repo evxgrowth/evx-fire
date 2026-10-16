@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Images, Play, Search, ImageIcon } from "lucide-react";
-import type { Campaign, Creative } from "@/lib/types";
+import type { Creative, Platform } from "@/lib/types";
 import { fmtMoney, fmtNum, fmtPct } from "@/lib/format";
 import PlatformBadge from "./PlatformIcon";
 
@@ -21,7 +21,7 @@ export function CreativeThumb({ c }: { c: Creative }) {
   }
   if (c.imageUrl) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={c.imageUrl} alt={c.headline} className="h-full w-full object-cover" />;
+    return <img src={c.imageUrl} alt={c.headline} loading="lazy" decoding="async" className="h-full w-full object-cover" />;
   }
   if (c.format === "search") {
     return (
@@ -51,7 +51,7 @@ export function CreativeThumb({ c }: { c: Creative }) {
   );
 }
 
-export default function CreativeCard({ c, campaign, index = 0 }: { c: Creative; campaign?: Campaign; index?: number }) {
+export default function CreativeCard({ c, campaign, index = 0 }: { c: Creative; campaign?: { name: string; platform: Platform }; index?: number }) {
   const ctr = c.impressions ? (c.clicks / c.impressions) * 100 : 0;
   const F = formatInfo[c.format];
   return (

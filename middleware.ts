@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC = ["/login", "/setup", "/share", "/api/meta/callback"];
+// /api/view confere sozinha quem pede (gestor logado ou link do cliente válido)
+const PUBLIC = ["/login", "/setup", "/share", "/api/meta/callback", "/api/view"];
 
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: req });
